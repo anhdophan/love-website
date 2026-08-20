@@ -23,6 +23,9 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 
+// Enable trust proxy for Render / Cloudflare / Vercel reverse proxies
+app.set('trust proxy', 1);
+
 // 🛡️ Centralized Security Middleware Stack Application
 app.use(configureSecurityHeaders);
 app.use(globalRateLimiter);

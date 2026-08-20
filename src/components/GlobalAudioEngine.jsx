@@ -18,8 +18,8 @@ export const GlobalAudioEngine = ({ activeTab }) => {
     return match ? match[1] : null;
   };
 
-  const ytId = currentSong?.type === 'youtube' ? getYouTubeVideoId(currentSong.source) : null;
-  const isAudioType = currentSong?.type === 'audio' || (!ytId && currentSong?.source?.endsWith('.mp3'));
+  const ytId = getYouTubeVideoId(currentSong?.source);
+  const isAudioType = !ytId && (currentSong?.type === 'audio' || currentSong?.source?.endsWith('.mp3') || currentSong?.source?.includes('audio'));
 
   // HTML5 Audio playback control
   useEffect(() => {
@@ -81,10 +81,11 @@ export const GlobalAudioEngine = ({ activeTab }) => {
         <div className="w-full aspect-video rounded-2xl overflow-hidden shadow-2xl border border-white/20 bg-black">
           <iframe
             id="global-youtube-player"
-            src={`https://www.youtube.com/embed/${ytId}?autoplay=${isPlayingGlobal ? 1 : 0}&enablejsapi=1&origin=${window.location.origin}`}
-            title={currentSong.title}
+            src={`https://www.youtube.com/embed/${ytId}?autoplay=${isPlayingGlobal ? 1 : 0}&enablejsapi=1&rel=0`}
+            title={currentSong.title || 'YouTube Player'}
             className="w-full h-full border-0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+            referrerPolicy="strict-origin-when-cross-origin"
             allowFullScreen
           />
         </div>

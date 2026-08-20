@@ -39,32 +39,33 @@ export const MusicPlayerModule = () => {
   const currentSong = playlist[currentSongIndex] || playlist[0] || null;
 
   const parseSongLink = (input, type) => {
-    if (!input) return '';
+    if (!input) return { source: '', type };
     let cleaned = input.trim();
     
-    if (type === 'youtube') {
-      const match = cleaned.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
-      return match ? match[1] : cleaned;
+    // Auto-detect YouTube links regardless of selected type
+    const ytMatch = cleaned.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+    if (ytMatch) {
+      return { source: ytMatch[1], type: 'youtube' };
     }
     
     if (type === 'spotify') {
       const match = cleaned.match(/track\/([a-zA-Z0-9]+)/);
-      return match ? match[1] : cleaned;
+      return { source: match ? match[1] : cleaned, type: 'spotify' };
     }
     
-    return cleaned;
+    return { source: cleaned, type };
   };
 
   const handleAddSong = (e) => {
     e.preventDefault();
     if (!form.title || !form.source) return;
 
-    const parsedSource = parseSongLink(form.source, form.type);
+    const parsed = parseSongLink(form.source, form.type);
     dispatch(addSongAsync({
       title: form.title,
       artist: form.artist || 'Nhiều ca sĩ',
-      type: form.type,
-      source: parsedSource,
+      type: parsed.type,
+      source: parsed.source,
       addedBy: form.addedBy,
     }));
 

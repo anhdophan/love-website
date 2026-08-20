@@ -72,6 +72,7 @@ export const verifySecurityHeader = (req, res, next) => {
 
 // 🛡️ 5. Apply Helmet Security Headers Config
 export const configureSecurityHeaders = helmet({
-  contentSecurityPolicy: false, // Set false for compatibility with embedded YouTube/Cloudinary, or customize below
+  contentSecurityPolicy: false, // Set false for compatibility with embedded YouTube/Cloudinary
   crossOriginResourcePolicy: { policy: "cross-origin" },
+  referrerPolicy: { policy: "strict-origin-when-cross-origin" },
 });
