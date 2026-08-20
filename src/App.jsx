@@ -61,7 +61,7 @@ export default function App() {
       <main className="max-w-6xl mx-auto px-4 py-6 relative z-10 space-y-8 animate-fadeIn">
         
         {/* Global Audio/Video Engine - Stays Mounted Permanently */}
-        <GlobalAudioEngine activeTab={activeTab} />
+        <GlobalAudioEngine activeTab={activeTab} setActiveTab={setActiveTab} />
 
         {activeTab === 'home' && (
           <div className="space-y-8">

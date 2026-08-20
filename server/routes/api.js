@@ -178,7 +178,7 @@ router.delete('/songs/:id', async (req, res) => {
 // Real-time Dual Listening & Sync API Routes
 router.post('/music/listening-status', async (req, res) => {
   try {
-    const { role, songTitle, artist, source, type, isPlaying, songIndex } = req.body;
+    const { role, songTitle, artist, source, type, isPlaying, songIndex, currentTime } = req.body;
     let couple = await Couple.findOne();
     if (!couple) couple = new Couple({});
 
@@ -191,6 +191,7 @@ router.post('/music/listening-status', async (req, res) => {
       type,
       isPlaying,
       songIndex,
+      currentTime: currentTime || 0,
       updatedAt: Date.now(),
     };
 
