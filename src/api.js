@@ -47,6 +47,40 @@ export const deleteSongApi = async (id) => {
   return res.json();
 };
 
+export const updateListeningStatusApi = async (statusData) => {
+  const res = await fetch(`${API_BASE}/music/listening-status`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(statusData),
+  });
+  return res.json();
+};
+
+export const toggleSharedModeApi = async (isSharedMode) => {
+  const res = await fetch(`${API_BASE}/music/toggle-shared-mode`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ isSharedMode }),
+  });
+  return res.json();
+};
+
+export const dedicateSongApi = async (dedicateData) => {
+  const res = await fetch(`${API_BASE}/music/dedicate-song`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dedicateData),
+  });
+  return res.json();
+};
+
+export const clearDedicatedSongApi = async () => {
+  const res = await fetch(`${API_BASE}/music/clear-dedicated`, {
+    method: 'DELETE',
+  });
+  return res.json();
+};
+
 // Milestone APIs
 export const addMilestoneApi = async (data) => {
   const res = await fetch(`${API_BASE}/milestones`, {

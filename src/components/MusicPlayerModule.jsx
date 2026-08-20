@@ -3,23 +3,30 @@ import { useSelector, useDispatch } from 'react-redux';
 import { 
   addSongAsync, deleteSongAsync, togglePlayGlobal, 
   nextSongGlobal, prevSongGlobal, setCurrentSongIndex, 
-  setSongFilter, setPlayMode 
+  setSongFilter, setPlayMode, toggleSharedModeAsync,
+  dedicateSongAsync, clearDedicatedSongAsync, setIsPlayingGlobal
 } from '../store/slices/musicSlice';
 import { 
   Music, Play, Pause, SkipForward, SkipBack, Plus, Trash2, 
-  Youtube, Radio, Disc, Shuffle, Repeat, Heart, Sparkles 
+  Disc, Shuffle, Repeat, Heart, Sparkles, Users, Send, Radio, MessageCircle, X
 } from 'lucide-react';
 
 export const MusicPlayerModule = () => {
   const dispatch = useDispatch();
   const couple = useSelector((state) => state.couple.info);
+  const activeRole = useSelector((state) => state.couple.activeRole);
   const playlist = useSelector((state) => state.music.playlist);
   const currentSongIndex = useSelector((state) => state.music.currentSongIndex);
   const isPlayingGlobal = useSelector((state) => state.music.isPlayingGlobal);
   const songFilter = useSelector((state) => state.music.songFilter);
   const playMode = useSelector((state) => state.music.playMode);
+  const listeningState = useSelector((state) => state.music.listeningState);
+  const dedicatedSong = useSelector((state) => state.music.dedicatedSong);
 
   const [isAddOpen, setIsAddOpen] = useState(false);
+  const [isDedicateOpen, setIsDedicateOpen] = useState(false);
+  const [targetDedicateSong, setTargetDedicateSong] = useState(null);
+  const [dedicateMessage, setDedicateMessage] = useState('');
 
   const [form, setForm] = useState({
     title: '',
@@ -28,6 +35,11 @@ export const MusicPlayerModule = () => {
     source: '',
     addedBy: 'Both',
   });
+
+  const partnerRole = activeRole === 'user2' ? 'user1' : 'user2';
+  const partnerName = activeRole === 'user2' ? couple.user1?.name : couple.user2?.name;
+  const partnerListening = listeningState ? listeningState[partnerRole] : null;
+  const isSharedMode = listeningState?.isSharedMode || false;
 
   // Filter playlist according to songFilter ('all' | 'Anh' | 'Em')
   const filteredPlaylist = playlist.filter(s => {
@@ -73,6 +85,49 @@ export const MusicPlayerModule = () => {
     setIsAddOpen(false);
   };
 
+  const handleTuneInPartner = () => {
+    if (!partnerListening || typeof partnerListening.songIndex !== 'number') return;
+    dispatch(setCurrentSongIndex(partnerListening.songIndex));
+    dispatch(setIsPlayingGlobal(true));
+  };
+
+  const handleSendDedication = (e) => {
+    e.preventDefault();
+    if (!targetDedicateSong || !dedicateMessage.trim()) return;
+
+    dispatch(dedicateSongAsync({
+      title: targetDedicateSong.title,
+      artist: targetDedicateSong.artist,
+      source: targetDedicateSong.source,
+      type: targetDedicateSong.type,
+      message: dedicateMessage,
+      dedicatedBy: activeRole === 'user2' ? couple.user2?.name : couple.user1?.name,
+    }));
+
+    setIsDedicateOpen(false);
+    setDedicateMessage('');
+    setTargetDedicateSong(null);
+    alert('Đã gửi tặng bài hát ngọt ngào thành công! 💌🎵');
+  };
+
+  const handlePlayDedicated = () => {
+    if (!dedicatedSong) return;
+    const foundIdx = playlist.findIndex(s => s.source === dedicatedSong.source || s.title === dedicatedSong.title);
+    if (foundIdx >= 0) {
+      dispatch(setCurrentSongIndex(foundIdx));
+    } else {
+      dispatch(addSongAsync({
+        title: dedicatedSong.title,
+        artist: dedicatedSong.artist,
+        type: dedicatedSong.type,
+        source: dedicatedSong.source,
+        addedBy: dedicatedSong.dedicatedBy,
+      }));
+      dispatch(setCurrentSongIndex(0));
+    }
+    dispatch(setIsPlayingGlobal(true));
+  };
+
   return (
     <div className="space-y-6">
       
@@ -87,18 +142,101 @@ export const MusicPlayerModule = () => {
               Góc Âm Nhạc Yêu Thương 🎵
             </h2>
             <p className="text-xs text-theme-muted mt-1">
-              Giai điệu kết nối trái tim • Phát nhạc xuyên suốt không bị ngắt quãng khi chuyển trang
+              Phát nhạc độc lập 2 máy • Chế độ Nghe Nhạc Chung real-time • Gửi tặng bài hát lãng mạn
             </p>
           </div>
         </div>
 
-        <button
-          onClick={() => setIsAddOpen(true)}
-          className="px-4 py-2.5 rounded-2xl bg-theme-primary text-black font-bold text-xs flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-md cursor-pointer z-10"
-        >
-          <Plus className="w-4 h-4" /> Thêm Bài Hát Yêu Thích
-        </button>
+        <div className="flex items-center gap-2 z-10">
+          <button
+            onClick={() => dispatch(toggleSharedModeAsync(!isSharedMode))}
+            className={`px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 transition-all shadow-md cursor-pointer ${
+              isSharedMode
+                ? 'bg-rose-500 text-white animate-pulse'
+                : 'bg-white/10 text-theme-text hover:bg-white/20'
+            }`}
+            title="Đồng bộ chuyển bài và phát nhạc giữa 2 máy"
+          >
+            <Users className="w-4 h-4" /> {isSharedMode ? '💞 Nghe Chung: ĐANG BẬT' : '🎧 Nghe Chung: TẮT'}
+          </button>
+
+          <button
+            onClick={() => setIsAddOpen(true)}
+            className="px-4 py-2.5 rounded-2xl bg-theme-primary text-black font-bold text-xs flex items-center gap-2 hover:opacity-90 active:scale-95 transition-all shadow-md cursor-pointer"
+          >
+            <Plus className="w-4 h-4" /> Thêm Bài Hát
+          </button>
+        </div>
       </div>
+
+      {/* 💌 ACTIVE DEDICATED SONG POPUP BANNER 💌 */}
+      {dedicatedSong && dedicatedSong.title && (
+        <div className="glass-panel p-5 rounded-3xl border-2 border-theme-secondary bg-gradient-to-r from-theme-secondary/15 to-theme-primary/15 shadow-2xl flex flex-col sm:flex-row items-center justify-between gap-4 animate-fadeIn">
+          <div className="flex items-center gap-3">
+            <div className="w-12 h-12 rounded-2xl bg-theme-secondary text-white flex items-center justify-center font-bold shadow-lg">
+              <Send className="w-6 h-6 animate-bounce" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 text-xs font-bold text-theme-secondary">
+                <Heart className="w-3.5 h-3.5 fill-current" /> Lời Tặng Bài Hát Từ {dedicatedSong.dedicatedBy} ({dedicatedSong.date})
+              </div>
+              <h4 className="font-bold text-base text-theme-text font-sans mt-0.5">
+                "{dedicatedSong.title}" - {dedicatedSong.artist}
+              </h4>
+              <p className="text-xs text-theme-muted italic font-handwriting text-sm mt-0.5">
+                "{dedicatedSong.message}"
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <button
+              onClick={handlePlayDedicated}
+              className="px-4 py-2 rounded-2xl bg-theme-secondary text-white font-bold text-xs hover:opacity-90 transition-all flex items-center gap-1.5 shadow-md cursor-pointer"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" /> Phát Bài Này 🎵
+            </button>
+
+            <button
+              onClick={() => dispatch(clearDedicatedSongAsync())}
+              className="p-2 rounded-xl bg-black/10 hover:bg-black/20 text-theme-muted"
+              title="Đóng thông báo này"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* 🌸 PARTNER LIVE LISTENING STATUS BAR 🌸 */}
+      {partnerListening && partnerListening.songTitle && partnerListening.songTitle !== 'Chưa nghe bài nào' && (
+        <div className="glass-panel p-4 rounded-3xl border border-white/15 shadow-xl flex items-center justify-between gap-4">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-xl bg-theme-primary/20 text-theme-primary flex items-center justify-center">
+              <Radio className={`w-5 h-5 ${partnerListening.isPlaying ? 'animate-pulse text-rose-400' : ''}`} />
+            </div>
+            <div>
+              <span className="text-[11px] font-bold text-theme-muted uppercase tracking-wider block">
+                Trạng Thái Trực Tiếp Của {partnerName}:
+              </span>
+              <div className="text-xs font-bold text-theme-text font-sans flex items-center gap-2">
+                <span>{partnerName} đang nghe: <strong>"{partnerListening.songTitle}"</strong></span>
+                <span className={`px-2 py-0.5 rounded-full text-[10px] ${partnerListening.isPlaying ? 'bg-emerald-500/20 text-emerald-400 font-bold' : 'bg-white/10 text-theme-muted'}`}>
+                  {partnerListening.isPlaying ? '🎵 Đang Phát' : '⏸️ Tạm Dừng'}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <button
+            onClick={handleTuneInPartner}
+            className="px-3.5 py-1.5 rounded-xl bg-theme-primary/20 hover:bg-theme-primary/30 text-theme-primary border border-theme-primary/30 text-xs font-bold transition-all flex items-center gap-1.5 cursor-pointer"
+            title={`Bật cùng bài hát với ${partnerName}`}
+          >
+            <Users className="w-3.5 h-3.5" /> Nghe Cùng {partnerName} 🎧
+          </button>
+        </div>
+      )}
 
       {/* 🌟 FEATURED MEDIA STAGE (TOP CENTER) 🌟 */}
       <div className="glass-panel p-6 rounded-3xl border border-white/20 shadow-2xl space-y-6">
@@ -141,7 +279,7 @@ export const MusicPlayerModule = () => {
                         <Music className="w-10 h-10 text-theme-primary" />
                       </div>
                       <div>
-                        <h4 className="text-xl font-bold font-sans">{currentSong.title}</h4>
+                        <h4 className="text-xl font-bold font-sans text-theme-text">{currentSong.title}</h4>
                         <p className="text-xs text-theme-muted mt-1">{currentSong.artist}</p>
                       </div>
                     </div>
@@ -298,10 +436,18 @@ export const MusicPlayerModule = () => {
                   </div>
                 </div>
 
-                <div className="flex items-center gap-3 flex-shrink-0">
-                  <span className="px-2.5 py-1 rounded-full bg-black/20 text-[10px] uppercase font-bold text-theme-primary">
-                    {song.type}
-                  </span>
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setTargetDedicateSong(song);
+                      setIsDedicateOpen(true);
+                    }}
+                    className="px-2.5 py-1 rounded-xl bg-theme-secondary/20 hover:bg-theme-secondary/30 text-theme-secondary text-xs font-bold transition-all flex items-center gap-1 cursor-pointer"
+                    title="Gửi tặng bài hát này"
+                  >
+                    <Send className="w-3 h-3" /> Tặng Bài Này 💌
+                  </button>
 
                   <button
                     onClick={(e) => {
@@ -323,6 +469,52 @@ export const MusicPlayerModule = () => {
         </div>
 
       </div>
+
+      {/* Dedicate Song Modal */}
+      {isDedicateOpen && targetDedicateSong && (
+        <div className="modal-overlay">
+          <div className="glass-panel modal-box max-w-md p-6 border border-white/20 shadow-2xl space-y-4">
+            <h3 className="text-lg font-bold font-sans flex items-center gap-2 text-theme-text">
+              <Send className="w-5 h-5 text-theme-secondary" /> Gửi Tặng Bài Hát Cho Người Ấy 💌
+            </h3>
+
+            <div className="p-3 rounded-2xl bg-white/5 border border-white/10 space-y-1">
+              <h4 className="font-bold text-sm text-theme-primary">{targetDedicateSong.title}</h4>
+              <p className="text-xs text-theme-muted">{targetDedicateSong.artist}</p>
+            </div>
+
+            <form onSubmit={handleSendDedication} className="space-y-3 text-xs">
+              <div>
+                <label className="block font-bold mb-1">Lời Nhắn Ngọt Ngào Dành Tặng *</label>
+                <textarea
+                  rows="3"
+                  required
+                  value={dedicateMessage}
+                  onChange={(e) => setDedicateMessage(e.target.value)}
+                  placeholder="VD: Nghe bài này nhớ anh/em nhiều lắm baby 💕..."
+                  className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-handwriting text-base"
+                />
+              </div>
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setIsDedicateOpen(false)}
+                  className="flex-1 py-2.5 rounded-xl bg-white/10 font-semibold hover:bg-white/20"
+                >
+                  Hủy
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 py-2.5 rounded-xl bg-theme-secondary text-white font-bold hover:opacity-90 shadow-md"
+                >
+                  Gửi Lời Tặng 💖
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Add Song Modal */}
       {isAddOpen && (
@@ -363,7 +555,7 @@ export const MusicPlayerModule = () => {
                   onChange={(e) => setForm({ ...form, type: e.target.value })}
                   className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-sans"
                 >
-                  <option value="youtube" className="bg-zinc-900 text-white">YouTube Video (ID hoặc Link)</option>
+                  <option value="youtube" className="bg-zinc-900 text-white">YouTube / YouTube Music (Link hoặc ID)</option>
                   <option value="spotify" className="bg-zinc-900 text-white">Spotify Track (ID hoặc Link)</option>
                   <option value="audio" className="bg-zinc-900 text-white">Link MP3 / Stream Trực Tiếp</option>
                 </select>
@@ -379,6 +571,9 @@ export const MusicPlayerModule = () => {
                   placeholder="Dán link YouTube / Spotify / MP3 vào đây"
                   className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
                 />
+                <p className="text-[10px] text-theme-muted mt-1 italic">
+                  💡 Nên dùng link YouTube/Spotify hoặc link MP3 trực tiếp để phát chất lượng cao nhất!
+                </p>
               </div>
 
               <div>

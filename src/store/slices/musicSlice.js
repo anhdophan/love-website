@@ -25,6 +25,38 @@ export const deleteSongAsync = createAsyncThunk(
   }
 );
 
+export const updateListeningStatusAsync = createAsyncThunk(
+  'music/updateListeningStatus',
+  async (statusData) => {
+    const res = await api.updateListeningStatusApi(statusData);
+    return res.listeningState;
+  }
+);
+
+export const toggleSharedModeAsync = createAsyncThunk(
+  'music/toggleSharedMode',
+  async (isSharedMode) => {
+    const res = await api.toggleSharedModeApi(isSharedMode);
+    return res.listeningState;
+  }
+);
+
+export const dedicateSongAsync = createAsyncThunk(
+  'music/dedicateSong',
+  async (dedicateData) => {
+    const res = await api.dedicateSongApi(dedicateData);
+    return res.dedicatedSong;
+  }
+);
+
+export const clearDedicatedSongAsync = createAsyncThunk(
+  'music/clearDedicatedSong',
+  async () => {
+    await api.clearDedicatedSongApi();
+    return null;
+  }
+);
+
 export const musicSlice = createSlice({
   name: 'music',
   initialState: {
@@ -34,6 +66,12 @@ export const musicSlice = createSlice({
     songFilter: localStorage.getItem('love_music_filter') || 'all',
     playMode: localStorage.getItem('love_music_mode') || 'sequential',
     currentTime: 0,
+    listeningState: {
+      user1: { songTitle: 'Chưa nghe bài nào', isPlaying: false },
+      user2: { songTitle: 'Chưa nghe bài nào', isPlaying: false },
+      isSharedMode: false,
+    },
+    dedicatedSong: null,
   },
   reducers: {
     setPlaylist: (state, action) => {
@@ -61,6 +99,14 @@ export const musicSlice = createSlice({
     },
     setCurrentTime: (state, action) => {
       state.currentTime = action.payload;
+    },
+    setListeningState: (state, action) => {
+      if (action.payload) {
+        state.listeningState = { ...state.listeningState, ...action.payload };
+      }
+    },
+    setDedicatedSong: (state, action) => {
+      state.dedicatedSong = action.payload;
     },
     nextSongGlobal: (state) => {
       if (state.playlist.length === 0) return;
@@ -99,6 +145,18 @@ export const musicSlice = createSlice({
         if (state.currentSongIndex >= state.playlist.length) {
           state.currentSongIndex = 0;
         }
+      })
+      .addCase(updateListeningStatusAsync.fulfilled, (state, action) => {
+        if (action.payload) state.listeningState = action.payload;
+      })
+      .addCase(toggleSharedModeAsync.fulfilled, (state, action) => {
+        if (action.payload) state.listeningState = action.payload;
+      })
+      .addCase(dedicateSongAsync.fulfilled, (state, action) => {
+        state.dedicatedSong = action.payload;
+      })
+      .addCase(clearDedicatedSongAsync.fulfilled, (state) => {
+        state.dedicatedSong = null;
       });
   },
 });
@@ -111,6 +169,8 @@ export const {
   setSongFilter,
   setPlayMode,
   setCurrentTime,
+  setListeningState,
+  setDedicatedSong,
   nextSongGlobal,
   prevSongGlobal,
 } = musicSlice.actions;

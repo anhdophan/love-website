@@ -1,10 +1,15 @@
 import React, { useEffect, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { nextSongGlobal, prevSongGlobal, togglePlayGlobal, setCurrentTime } from '../store/slices/musicSlice';
+import { 
+  nextSongGlobal, prevSongGlobal, togglePlayGlobal, 
+  setCurrentTime, updateListeningStatusAsync, setCurrentSongIndex, setIsPlayingGlobal 
+} from '../store/slices/musicSlice';
+import { fetchAllAppDataAsync } from '../store/slices/appDataSlices';
 
 export const GlobalAudioEngine = ({ activeTab }) => {
   const dispatch = useDispatch();
-  const { playlist, currentSongIndex, isPlayingGlobal } = useSelector((state) => state.music);
+  const { playlist, currentSongIndex, isPlayingGlobal, listeningState } = useSelector((state) => state.music);
+  const activeRole = useSelector((state) => state.couple.activeRole);
   const currentSong = playlist[currentSongIndex];
   const audioRef = useRef(null);
 
@@ -21,7 +26,47 @@ export const GlobalAudioEngine = ({ activeTab }) => {
   const ytId = getYouTubeVideoId(currentSong?.source);
   const isAudioType = !ytId && (currentSong?.type === 'audio' || currentSong?.source?.endsWith('.mp3') || currentSong?.source?.includes('audio'));
 
-  // HTML5 Audio playback control (resumes from current position)
+  // 1. Sync active role's listening status to server
+  useEffect(() => {
+    if (!activeRole || !currentSong) return;
+    dispatch(updateListeningStatusAsync({
+      role: activeRole,
+      songTitle: currentSong.title,
+      artist: currentSong.artist,
+      source: currentSong.source,
+      type: currentSong.type,
+      isPlaying: isPlayingGlobal,
+      songIndex: currentSongIndex,
+    }));
+  }, [activeRole, currentSongIndex, isPlayingGlobal, currentSong, dispatch]);
+
+  // 2. Poll app data & listen together sync every 4 seconds
+  useEffect(() => {
+    const pollInterval = setInterval(() => {
+      dispatch(fetchAllAppDataAsync());
+    }, 4000);
+    return () => clearInterval(pollInterval);
+  }, [dispatch]);
+
+  // 3. Listen Together (Shared Mode) Sync: If partner updated song/play state, sync local player!
+  useEffect(() => {
+    if (!listeningState?.isSharedMode || !activeRole) return;
+
+    const partnerRole = activeRole === 'user2' ? 'user1' : 'user2';
+    const partnerState = listeningState[partnerRole];
+    const lastUpdatedBy = listeningState.lastUpdatedBy;
+
+    if (lastUpdatedBy === partnerRole && partnerState) {
+      if (typeof partnerState.songIndex === 'number' && partnerState.songIndex !== currentSongIndex && partnerState.songIndex < playlist.length) {
+        dispatch(setCurrentSongIndex(partnerState.songIndex));
+      }
+      if (typeof partnerState.isPlaying === 'boolean' && partnerState.isPlaying !== isPlayingGlobal) {
+        dispatch(setIsPlayingGlobal(partnerState.isPlaying));
+      }
+    }
+  }, [listeningState, activeRole, currentSongIndex, isPlayingGlobal, playlist.length, dispatch]);
+
+  // HTML5 Audio playback control
   useEffect(() => {
     if (!audioRef.current || !isAudioType) return;
 
@@ -32,7 +77,7 @@ export const GlobalAudioEngine = ({ activeTab }) => {
     }
   }, [isPlayingGlobal, currentSongIndex, isAudioType]);
 
-  // YouTube Iframe PostMessage Play/Pause control (resumes at exact second, NO REBOOT/RELOAD)
+  // YouTube Iframe PostMessage Play/Pause control
   useEffect(() => {
     if (!ytId) return;
 
@@ -62,7 +107,7 @@ export const GlobalAudioEngine = ({ activeTab }) => {
     dispatch(nextSongGlobal());
   };
 
-  // Media Session API Integration for Phone Lock Screen & Bluetooth Widgets
+  // Media Session API Integration
   useEffect(() => {
     if (typeof window !== 'undefined' && 'mediaSession' in navigator && currentSong) {
       navigator.mediaSession.metadata = new MediaMetadata({
@@ -95,7 +140,7 @@ export const GlobalAudioEngine = ({ activeTab }) => {
         />
       )}
 
-      {/* YouTube Iframe Player - Static src prevents iframe reloading on pause/resume */}
+      {/* YouTube Iframe Player */}
       {ytId && (
         <div className="w-full aspect-video rounded-2xl overflow-hidden shadow-2xl border border-white/20 bg-black">
           <iframe

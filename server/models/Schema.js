@@ -22,6 +22,21 @@ const CoupleSchema = new mongoose.Schema({
   heartCount: { type: Number, default: 520 },
   user1Theme: { type: String, default: 'golden' },
   user2Theme: { type: String, default: 'rose' },
+  listeningState: {
+    user1: { type: Object, default: { songTitle: 'Chưa nghe bài nào', isPlaying: false } },
+    user2: { type: Object, default: { songTitle: 'Chưa nghe bài nào', isPlaying: false } },
+    isSharedMode: { type: Boolean, default: false },
+    lastUpdatedBy: { type: String, default: null },
+  },
+  dedicatedSong: {
+    title: { type: String, default: '' },
+    artist: { type: String, default: '' },
+    source: { type: String, default: '' },
+    type: { type: String, default: 'youtube' },
+    message: { type: String, default: '' },
+    dedicatedBy: { type: String, default: '' },
+    date: { type: String, default: '' },
+  },
 }, { timestamps: true });
 
 // Timeline Milestones

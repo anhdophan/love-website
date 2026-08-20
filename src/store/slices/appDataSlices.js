@@ -1,7 +1,7 @@
 import { createSlice, createAsyncThunk } from '@reduxjs/toolkit';
 import * as api from '../../api';
 import { setCoupleData } from './coupleSlice';
-import { setPlaylist } from './musicSlice';
+import { setPlaylist, setListeningState, setDedicatedSong } from './musicSlice';
 
 export const fetchAllAppDataAsync = createAsyncThunk(
   'appData/fetchAll',
@@ -9,6 +9,12 @@ export const fetchAllAppDataAsync = createAsyncThunk(
     const data = await api.fetchAllData();
     if (data.couple) {
       dispatch(setCoupleData(data.couple));
+      if (data.couple.listeningState) {
+        dispatch(setListeningState(data.couple.listeningState));
+      }
+      if (data.couple.dedicatedSong) {
+        dispatch(setDedicatedSong(data.couple.dedicatedSong));
+      }
     }
     if (data.playlist) {
       dispatch(setPlaylist(data.playlist));

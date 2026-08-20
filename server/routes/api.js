@@ -175,6 +175,86 @@ router.delete('/songs/:id', async (req, res) => {
   }
 });
 
+// Real-time Dual Listening & Sync API Routes
+router.post('/music/listening-status', async (req, res) => {
+  try {
+    const { role, songTitle, artist, source, type, isPlaying, songIndex } = req.body;
+    let couple = await Couple.findOne();
+    if (!couple) couple = new Couple({});
+
+    if (!couple.listeningState) couple.listeningState = {};
+    
+    const statusObj = {
+      songTitle,
+      artist,
+      source,
+      type,
+      isPlaying,
+      songIndex,
+      updatedAt: Date.now(),
+    };
+
+    if (role === 'user2') {
+      couple.listeningState.user2 = statusObj;
+    } else {
+      couple.listeningState.user1 = statusObj;
+    }
+
+    couple.listeningState.lastUpdatedBy = role;
+    couple.markModified('listeningState');
+    await couple.save();
+
+    res.json({ success: true, listeningState: couple.listeningState });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/music/toggle-shared-mode', async (req, res) => {
+  try {
+    const { isSharedMode } = req.body;
+    let couple = await Couple.findOne();
+    if (couple) {
+      if (!couple.listeningState) couple.listeningState = {};
+      couple.listeningState.isSharedMode = isSharedMode;
+      couple.markModified('listeningState');
+      await couple.save();
+    }
+    res.json({ success: true, listeningState: couple.listeningState });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.post('/music/dedicate-song', async (req, res) => {
+  try {
+    let couple = await Couple.findOne();
+    if (couple) {
+      couple.dedicatedSong = {
+        ...req.body,
+        date: new Date().toLocaleDateString('vi-VN'),
+      };
+      await couple.save();
+    }
+    res.json({ success: true, dedicatedSong: couple.dedicatedSong });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+router.delete('/music/clear-dedicated', async (req, res) => {
+  try {
+    let couple = await Couple.findOne();
+    if (couple) {
+      couple.dedicatedSong = { title: '', artist: '', source: '', type: 'youtube', message: '', dedicatedBy: '', date: '' };
+      await couple.save();
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Milestones API
 router.post('/milestones', async (req, res) => {
   try {
