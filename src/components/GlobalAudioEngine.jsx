@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { useSelector, useDispatch } from 'react-redux';
-import { nextSongGlobal, setCurrentTime } from '../store/slices/musicSlice';
+import { nextSongGlobal, prevSongGlobal, togglePlayGlobal, setCurrentTime } from '../store/slices/musicSlice';
 
 export const GlobalAudioEngine = ({ activeTab }) => {
   const dispatch = useDispatch();
@@ -21,7 +21,7 @@ export const GlobalAudioEngine = ({ activeTab }) => {
   const ytId = getYouTubeVideoId(currentSong?.source);
   const isAudioType = !ytId && (currentSong?.type === 'audio' || currentSong?.source?.endsWith('.mp3') || currentSong?.source?.includes('audio'));
 
-  // HTML5 Audio playback control
+  // HTML5 Audio playback control (resumes from current position)
   useEffect(() => {
     if (!audioRef.current || !isAudioType) return;
 
@@ -31,6 +31,26 @@ export const GlobalAudioEngine = ({ activeTab }) => {
       audioRef.current.pause();
     }
   }, [isPlayingGlobal, currentSongIndex, isAudioType]);
+
+  // YouTube Iframe PostMessage Play/Pause control (resumes at exact second, NO REBOOT/RELOAD)
+  useEffect(() => {
+    if (!ytId) return;
+
+    const sendYouTubeCommand = () => {
+      const iframe = document.getElementById('global-youtube-player');
+      if (iframe && iframe.contentWindow) {
+        const command = isPlayingGlobal ? 'playVideo' : 'pauseVideo';
+        iframe.contentWindow.postMessage(JSON.stringify({
+          event: 'command',
+          func: command,
+          args: []
+        }), '*');
+      }
+    };
+
+    const timer = setTimeout(sendYouTubeCommand, 300);
+    return () => clearTimeout(timer);
+  }, [isPlayingGlobal, ytId]);
 
   const handleTimeUpdate = () => {
     if (audioRef.current) {
@@ -72,16 +92,15 @@ export const GlobalAudioEngine = ({ activeTab }) => {
           src={currentSong.source}
           onTimeUpdate={handleTimeUpdate}
           onEnded={handleAudioEnded}
-          autoPlay={isPlayingGlobal}
         />
       )}
 
-      {/* YouTube Iframe Player - Kept permanently mounted in DOM */}
+      {/* YouTube Iframe Player - Static src prevents iframe reloading on pause/resume */}
       {ytId && (
         <div className="w-full aspect-video rounded-2xl overflow-hidden shadow-2xl border border-white/20 bg-black">
           <iframe
             id="global-youtube-player"
-            src={`https://www.youtube.com/embed/${ytId}?autoplay=${isPlayingGlobal ? 1 : 0}&enablejsapi=1&rel=0`}
+            src={`https://www.youtube.com/embed/${ytId}?enablejsapi=1&rel=0&autoplay=1`}
             title={currentSong.title || 'YouTube Player'}
             className="w-full h-full border-0"
             allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"

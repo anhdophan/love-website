@@ -107,14 +107,14 @@ export const HeaderNavbar = ({ activeTab, setActiveTab }) => {
             
             {/* Global Persistent Mini Music Control Pill */}
             {playlist && playlist.length > 0 && (
-              <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-2xl bg-black/10 dark:bg-white/10 border border-white/15 backdrop-blur-md">
+              <div className="flex items-center gap-1 sm:gap-1.5 px-2 sm:px-2.5 py-1 rounded-2xl bg-black/10 dark:bg-white/10 border border-white/15 backdrop-blur-md">
                 <button
                   onClick={() => setActiveTab('music')}
-                  className="flex items-center gap-1.5 text-xs text-theme-primary font-bold hover:underline max-w-[110px] md:max-w-[140px] truncate"
+                  className="flex items-center gap-1 sm:gap-1.5 text-xs text-theme-primary font-bold hover:underline max-w-[70px] sm:max-w-[110px] md:max-w-[140px] truncate"
                   title="Chuyển đến trang Góc Nhạc"
                 >
-                  <Disc className={`w-4 h-4 text-theme-primary flex-shrink-0 ${isPlayingGlobal ? 'animate-spin' : ''}`} style={{ animationDuration: '6s' }} />
-                  <span className="truncate text-[11px]">
+                  <Disc className={`w-3.5 h-3.5 sm:w-4 sm:h-4 text-theme-primary flex-shrink-0 ${isPlayingGlobal ? 'animate-spin' : ''}`} style={{ animationDuration: '6s' }} />
+                  <span className="truncate text-[10px] sm:text-[11px] hidden xs:inline">
                     {playlist[currentSongIndex]?.title || 'Phát nhạc'}
                   </span>
                 </button>
@@ -124,12 +124,12 @@ export const HeaderNavbar = ({ activeTab, setActiveTab }) => {
                   className="p-1 rounded-lg bg-theme-primary text-black hover:scale-110 active:scale-95 transition-transform cursor-pointer"
                   title={isPlayingGlobal ? "Tạm dừng nhạc" : "Bật nhạc"}
                 >
-                  {isPlayingGlobal ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5 fill-black ml-0.5" />}
+                  {isPlayingGlobal ? <Pause className="w-3 h-3 sm:w-3.5 sm:h-3.5" /> : <Play className="w-3 h-3 sm:w-3.5 sm:h-3.5 fill-black ml-0.5" />}
                 </button>
 
                 <button
                   onClick={() => dispatch(nextSongGlobal())}
-                  className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-theme-text transition-colors cursor-pointer"
+                  className="p-1 rounded-lg bg-white/10 hover:bg-white/20 text-theme-text transition-colors cursor-pointer hidden sm:block"
                   title="Bài tiếp theo"
                 >
                   <SkipForward className="w-3.5 h-3.5" />
@@ -140,12 +140,12 @@ export const HeaderNavbar = ({ activeTab, setActiveTab }) => {
             {/* Active User Role Switcher Button */}
             <button
               onClick={() => setIsSwitchRoleOpen(true)}
-              className="flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-theme-primary/20 hover:bg-theme-primary/30 text-theme-primary border border-theme-primary/30 transition-all active:scale-95 cursor-pointer"
+              className="flex items-center gap-1.5 sm:gap-2 px-2 sm:px-3 py-1.5 rounded-2xl bg-theme-primary/20 hover:bg-theme-primary/30 text-theme-primary border border-theme-primary/30 transition-all active:scale-95 cursor-pointer"
               title="Đổi tài khoản thiết bị này (Anh hoặc Em)"
             >
               <img src={currentRoleAvatar} alt={currentRoleName} className="w-5 h-5 rounded-full object-cover border border-white" />
-              <span className="font-bold text-xs truncate max-w-[80px]">{currentRoleName}</span>
-              <RefreshCw className="w-3 h-3 opacity-60" />
+              <span className="font-bold text-xs truncate max-w-[60px] sm:max-w-[80px] hidden xs:inline">{currentRoleName}</span>
+              <RefreshCw className="w-3 h-3 opacity-60 hidden sm:inline" />
             </button>
 
             <button
