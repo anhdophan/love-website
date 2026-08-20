@@ -1,0 +1,175 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* Theme 1: Golden Sunset (Yellow + Soft Rose Velvet - Default) */
+  --color-primary: #FFB703;
+  --color-secondary: #E63946;
+  --color-accent: #FB8500;
+  --color-bg: #FFFDF9;
+  --color-card: rgba(255, 255, 255, 0.75);
+  --color-text: #2B2D42;
+  --color-muted: #6C757D;
+  --color-border: rgba(255, 183, 3, 0.25);
+  --glass-glow: 0 8px 24px rgba(255, 183, 3, 0.14), 0 2px 8px rgba(230, 57, 70, 0.08);
+}
+
+[data-theme="cherry"] {
+  --color-primary: #F472B6;
+  --color-secondary: #F59E0B;
+  --color-accent: #EC4899;
+  --color-bg: #FFF5F7;
+  --color-card: rgba(255, 255, 255, 0.8);
+  --color-text: #4A1525;
+  --color-muted: #9D5C63;
+  --color-border: rgba(244, 114, 182, 0.25);
+  --glass-glow: 0 8px 24px rgba(244, 114, 182, 0.16), 0 2px 8px rgba(245, 158, 11, 0.1);
+}
+
+[data-theme="midnight"] {
+  --color-primary: #FBBF24;
+  --color-secondary: #818CF8;
+  --color-accent: #F59E0B;
+  --color-bg: #0F172A;
+  --color-card: rgba(30, 41, 59, 0.7);
+  --color-text: #F8FAFC;
+  --color-muted: #94A3B8;
+  --color-border: rgba(251, 191, 36, 0.25);
+  --glass-glow: 0 8px 24px rgba(251, 191, 36, 0.12), 0 2px 12px rgba(129, 140, 248, 0.15);
+}
+
+[data-theme="sage"] {
+  --color-primary: #EAB308;
+  --color-secondary: #10B981;
+  --color-accent: #F59E0B;
+  --color-bg: #F4F7F4;
+  --color-card: rgba(255, 255, 255, 0.8);
+  --color-text: #1C3322;
+  --color-muted: #57755E;
+  --color-border: rgba(234, 179, 8, 0.25);
+  --glass-glow: 0 8px 24px rgba(16, 185, 129, 0.12), 0 2px 8px rgba(234, 179, 8, 0.12);
+}
+
+[data-theme="amethyst"] {
+  --color-primary: #FACC15;
+  --color-secondary: #A855F7;
+  --color-accent: #C084FC;
+  --color-bg: #1A0B2E;
+  --color-card: rgba(43, 21, 76, 0.65);
+  --color-text: #FAF5FF;
+  --color-muted: #C084FC;
+  --color-border: rgba(250, 204, 21, 0.3);
+  --glass-glow: 0 8px 24px rgba(168, 85, 247, 0.2), 0 2px 12px rgba(250, 204, 21, 0.15);
+}
+
+/* ─── Glassmorphism Base ─────────────────────── */
+.glass-panel {
+  background: var(--color-card);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--color-border);
+  box-shadow: var(--glass-glow);
+}
+
+.glass-panel-hover {
+  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1),
+              box-shadow 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  will-change: transform;
+}
+.glass-panel-hover:hover {
+  transform: translateY(-4px) scale(1.01);
+  box-shadow: var(--glass-glow), 0 12px 24px rgba(0, 0, 0, 0.07);
+}
+
+/* ─── Custom Scrollbar ────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: var(--color-primary);
+  border-radius: 9999px;
+  opacity: 0.6;
+}
+::-webkit-scrollbar-thumb:hover { background: var(--color-secondary); }
+
+/* ─── Floating background hearts (GPU only) ──── */
+.particle-heart {
+  position: absolute;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: floatHeart var(--dur, 14s) linear infinite;
+  animation-delay: var(--delay, 0s);
+  opacity: 0;
+}
+
+@keyframes floatHeart {
+  0%   { transform: translateY(105vh) scale(0.5); opacity: 0; }
+  10%  { opacity: 0.5; }
+  85%  { opacity: 0.5; }
+  100% { transform: translateY(-8vh) scale(1.1); opacity: 0; }
+}
+
+/* ─── CSS Heart Burst (replaces heavy confetti) ─ */
+.heart-burst-container {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 9999;
+  overflow: hidden;
+}
+
+.heart-burst {
+  position: absolute;
+  font-size: 18px;
+  pointer-events: none;
+  will-change: transform, opacity;
+  animation: heartFly 0.9s ease-out forwards;
+}
+
+@keyframes heartFly {
+  0% {
+    transform: translate(var(--dx, 0px), var(--dy, 0px)) scale(0.4);
+    opacity: 1;
+  }
+  60% {
+    opacity: 0.9;
+  }
+  100% {
+    transform: translate(calc(var(--dx, 0px) * 3), calc(var(--dy, 0px) * 3 - 80px)) scale(1);
+    opacity: 0;
+  }
+}
+
+/* ─── Modal overlay: always scrollable on small screens ─ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  overflow-y: auto;
+}
+
+.modal-box {
+  width: 100%;
+  max-width: 32rem;
+  max-height: calc(100dvh - 2rem);
+  overflow-y: auto;
+  border-radius: 1.5rem;
+  position: relative;
+  margin: auto;
+}
+
+/* ─── prefers-reduced-motion: disable all animations ─ */
+@media (prefers-reduced-motion: reduce) {
+  *, ::before, ::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
