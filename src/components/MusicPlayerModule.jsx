@@ -131,7 +131,13 @@ export const MusicPlayerModule = () => {
           addedBy: ytConvert.addedBy,
         }),
       });
-      const data = await res.json();
+      const resText = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(resText);
+      } catch (e) {
+        throw new Error(`Lỗi máy chủ (${res.status}). Vui lòng thử lại!`);
+      }
       if (!res.ok) throw new Error(data.error || 'Chuyển đổi thất bại');
 
       setYtConvertStatus('done');
@@ -143,7 +149,7 @@ export const MusicPlayerModule = () => {
         setYtConvertStatus('idle');
         setYtConvertMsg('');
         setIsAddOpen(false);
-        setAddMode('direct');
+        setAddMode('fileupload');
         // Trigger full playlist reload
         dispatch(fetchAllAppDataAsync());
       }, 2500);
@@ -163,7 +169,7 @@ export const MusicPlayerModule = () => {
     }
 
     setFileUploadStatus('loading');
-    setFileUploadMsg(`Đang tải file "${audioFile.name}" (${(audioFile.size / 1024 / 1024).toFixed(2)} MB) lên máy chủ...`);
+    setFileUploadMsg(`Đang tải file "${audioFile.name}" (${(audioFile.size / 1024 / 1024).toFixed(2)} MB) lên máy chủ... (Có thể mất vài chục giây)`);
 
     try {
       const formData = new FormData();
@@ -177,7 +183,14 @@ export const MusicPlayerModule = () => {
         body: formData,
       });
 
-      const data = await res.json();
+      const resText = await res.text();
+      let data = {};
+      try {
+        data = JSON.parse(resText);
+      } catch (e) {
+        throw new Error(`Lỗi phản hồi máy chủ (${res.status}). Dịch vụ có thể đang bận, thử lại nhé!`);
+      }
+      if (!res.ok) throw new Error(data.error || 'Tải file thất bại');
       if (!res.ok) throw new Error(data.error || 'Tải file thất bại');
 
       setFileUploadStatus('done');

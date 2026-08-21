@@ -188,8 +188,24 @@ router.post('/upload', async (req, res) => {
   }
 });
 
+// Configure Multer for in-memory file uploads (max 200MB for audio files)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB max limit
+});
+
 // Direct MP3 File Upload API (Upload local audio file to Cloudinary & DB)
-router.post('/songs/upload-mp3', upload.single('audioFile'), async (req, res) => {
+router.post('/songs/upload-mp3', (req, res, next) => {
+  upload.single('audioFile')(req, res, (err) => {
+    if (err) {
+      if (err.code === 'LIMIT_FILE_SIZE') {
+        return res.status(400).json({ error: 'File nhạc quá lớn. Dung lượng tối đa cho phép là 200MB!' });
+      }
+      return res.status(400).json({ error: `Lỗi tải file: ${err.message}` });
+    }
+    next();
+  });
+}, async (req, res) => {
   try {
     if (!req.file) {
       return res.status(400).json({ error: 'Chưa chọn file âm thanh nào (MP3/M4A/WAV...)' });
@@ -244,7 +260,7 @@ router.post('/songs/upload-mp3', upload.single('audioFile'), async (req, res) =>
 router.post('/songs/youtube-to-mp3', async (req, res) => {
   const { youtubeId, title, artist, addedBy } = req.body;
   if (!youtubeId) {
-    return res.status(400).json({ error: 'Missing youtubeId' });
+    return res.status(400).json({ error: 'Chưa cung cấp YouTube ID' });
   }
 
   // Clean YouTube ID (strip playlist params if any)
@@ -254,6 +270,22 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
   console.log(`[YouTube→MP3 Log] 🎵 Bắt đầu xử lý video ID: ${cleanId} (URL: ${youtubeUrl})`);
 
   try {
+    // ── Step 1: Check Cloudinary dedup first (avoid running yt-dlp if cached!) ─
+    const cloudinaryPublicId = `love_website_audio/yt_${cleanId}`;
+    try {
+      const existing = await cloudinary.api.resource(cloudinaryPublicId, { resource_type: 'video' });
+      console.log(`[YouTube→MP3 Log] ⚡ Đã tìm thấy trên Cloudinary (bản cache): ${existing.secure_url}`);
+      const newSong = await Song.create({
+        title: title || `Video YouTube (${cleanId})`,
+        artist: artist || 'YouTube Artist',
+        type: 'audio', source: existing.secure_url,
+        addedBy: addedBy || 'Both', originalYoutubeId: cleanId,
+      });
+      return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url, cached: true });
+    } catch (_) {
+      // Not cached → proceed with download
+    }
+
     // Build robust yt-dlp options (bypasses bot detection and "page needs to be reloaded" error)
     const ytdlBaseOpts = {
       noPlaylist: true,
@@ -265,41 +297,33 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
       ...(COOKIES_FILE ? { cookies: COOKIES_FILE } : {}),
     };
 
-    // ── Step 1: Get video metadata (title, artist) ────────────────────────────
+    // ── Step 2: Get video metadata (title, artist) safely ──────────────────────
     console.log(`[YouTube→MP3 Log] 🔍 Đang đọc thông tin metadata video...`);
-    let info = {};
-    try {
-      info = await youtubedl(youtubeUrl, {
-        ...ytdlBaseOpts,
-        dumpSingleJson: true,
-      });
-    } catch (infoErr) {
-      console.warn(`[YouTube→MP3 Warning] dumpSingleJson failed: ${infoErr.message}`);
+    let videoTitle = title;
+    let videoAuthor = artist;
+
+    if (!videoTitle || !videoAuthor) {
+      try {
+        const info = await youtubedl(youtubeUrl, {
+          ...ytdlBaseOpts,
+          dumpSingleJson: true,
+        });
+        if (!videoTitle) videoTitle = info.title || `Video YouTube (${cleanId})`;
+        if (!videoAuthor) videoAuthor = info.uploader || info.channel || 'YouTube Artist';
+      } catch (infoErr) {
+        console.warn(`[YouTube→MP3 Warning] dumpSingleJson metadata skipped: ${infoErr.message}`);
+        if (!videoTitle) videoTitle = `Bài hát YouTube (${cleanId})`;
+        if (!videoAuthor) videoAuthor = 'YouTube Artist';
+      }
     }
 
-    const videoTitle  = title  || info.title   || `Video YouTube (${cleanId})`;
-    const videoAuthor = artist || info.uploader || info.channel || 'YouTube Artist';
+    console.log(`[YouTube→MP3 Log] 📌 Metadata: "${videoTitle}" bởi ${videoAuthor}`);
 
-    console.log(`[YouTube→MP3 Log] 📌 Đã lấy metadata: "${videoTitle}" bởi ${videoAuthor}`);
-
-    // ── Step 2: Cloudinary dedup — skip re-conversion of same video ───────────
-    const cloudinaryPublicId = `love_website_audio/yt_${cleanId}`;
-    try {
-      const existing = await cloudinary.api.resource(cloudinaryPublicId, { resource_type: 'video' });
-      console.log(`[YouTube→MP3 Log] ⚡ Đã tìm thấy trên Cloudinary (bản cache): ${existing.secure_url}`);
-      const newSong = await Song.create({
-        title: videoTitle, artist: videoAuthor,
-        type: 'audio', source: existing.secure_url,
-        addedBy: addedBy || 'Both', originalYoutubeId: cleanId,
-      });
-      return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url, cached: true });
-    } catch (_) {
-      // Not cached → proceed with download
-    }
-
-    // ── Step 3: Pipe yt-dlp audio stdout → Cloudinary upload stream ──────────
+    // ── Step 3: Pipe yt-dlp audio stdout → Cloudinary upload stream safely ────
     console.log(`[YouTube→MP3 Log] ⏳ Đang tải và stream audio sang Cloudinary...`);
     const cloudinaryResult = await new Promise((resolve, reject) => {
+      let isResolved = false;
+
       const uploadStream = cloudinary.uploader.upload_stream(
         {
           resource_type: 'video',
@@ -308,21 +332,44 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
           overwrite: false,
         },
         (error, result) => {
-          if (error) reject(error);
-          else resolve(result);
+          if (isResolved) return;
+          if (error) {
+            isResolved = true;
+            reject(error);
+          } else {
+            isResolved = true;
+            resolve(result);
+          }
         }
       );
 
-      // 'bestaudio/b/best' allows ANY audio format (m4a, webm, opus, or best video+audio combined fallback)
-      const ytProcess = ytdlExec(youtubeUrl, {
+      // Execute ytdlExec safely
+      const ytPromise = ytdlExec(youtubeUrl, {
         ...ytdlBaseOpts,
         format: 'bestaudio/b/best',
         output: '-',    // pipe to stdout, no temp file
       }, { stdio: ['ignore', 'pipe', 'ignore'] });
 
-      ytProcess.stdout.pipe(uploadStream);
-      ytProcess.on('error', (err) => reject(new Error(`yt-dlp error: ${err.message}`)));
-      ytProcess.stdout.on('error', (err) => reject(new Error(`stream error: ${err.message}`)));
+      // Catch top-level child process promise error so Node process NEVER crashes!
+      ytPromise.catch(procErr => {
+        console.warn('[YouTube→MP3 ChildProcess Promise Caught]:', procErr.message);
+        if (!isResolved) {
+          isResolved = true;
+          reject(new Error(`YouTube không cho phép tải trực tiếp trên Render Cloud IP (${procErr.message}). Vui lòng dùng tab "📁 Tải MP3" để chọn file nhạc từ máy!`));
+        }
+      });
+
+      if (ytPromise.stdout) {
+        ytPromise.stdout.pipe(uploadStream);
+        ytPromise.stdout.on('error', (err) => {
+          if (!isResolved) {
+            isResolved = true;
+            reject(new Error(`Stream error: ${err.message}`));
+          }
+        });
+      } else {
+        reject(new Error('Không thể khởi tạo luồng dữ liệu yt-dlp'));
+      }
     });
 
     console.log(`[YouTube→MP3 Log] ✅ Upload Cloudinary thành công: ${cloudinaryResult.secure_url}`);
@@ -346,11 +393,11 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
   } catch (err) {
     const errorMsg = err.message || err.toString();
     console.error(`[YouTube→MP3 Error Log] ❌ Lỗi chuyển đổi (ID: ${cleanId}):`, errorMsg);
-    if (err.stderr) console.error('[YouTube→MP3 stderr]:', err.stderr);
-    if (err.stack) console.error('[YouTube→MP3 stack]:', err.stack);
 
     res.status(500).json({
-      error: `Lỗi chuyển đổi: ${errorMsg}`,
+      error: errorMsg.includes('tab "📁 Tải MP3"')
+        ? errorMsg
+        : `YouTube đã chặn IP Cloud của Render đối với video này. Vui lòng chọn tab "📁 Tải MP3" để chọn file nhạc từ máy tính/điện thoại (nhanh & 100% phát nền)!`,
       details: err.stderr || null,
     });
   }
