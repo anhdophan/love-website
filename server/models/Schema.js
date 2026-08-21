@@ -61,13 +61,14 @@ const GallerySchema = new mongoose.Schema({
   public_id: { type: String, default: '' },
 }, { timestamps: true });
 
-// Music Playlist (Fix delete bug with Mongoose _id)
+// Music Playlist
 const SongSchema = new mongoose.Schema({
   title: { type: String, required: true },
   artist: { type: String, default: 'Nhiều ca sĩ' },
-  type: { type: String, default: 'youtube' },
-  source: { type: String, required: true },
+  type: { type: String, default: 'youtube' },   // 'youtube' | 'audio'
+  source: { type: String, required: true },      // Cloudinary URL or YouTube ID
   addedBy: { type: String, default: 'Both' },
+  originalYoutubeId: { type: String, default: '' }, // Track YouTube origin for deduplication
 }, { timestamps: true });
 
 // Dating Reminders

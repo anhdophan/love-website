@@ -6,6 +6,7 @@ import {
   setSongFilter, setPlayMode, toggleSharedModeAsync,
   dedicateSongAsync, clearDedicatedSongAsync, setIsPlayingGlobal
 } from '../store/slices/musicSlice';
+import { fetchAllAppDataAsync } from '../store/slices/appDataSlices';
 import { 
   Music, Play, Pause, SkipForward, SkipBack, Plus, Trash2, 
   Disc, Shuffle, Repeat, Heart, Sparkles, Users, Send, Radio, MessageCircle, X
@@ -27,6 +28,11 @@ export const MusicPlayerModule = () => {
   const [isDedicateOpen, setIsDedicateOpen] = useState(false);
   const [targetDedicateSong, setTargetDedicateSong] = useState(null);
   const [dedicateMessage, setDedicateMessage] = useState('');
+  // YouTube → MP3 conversion state
+  const [ytConvert, setYtConvert] = useState({ url: '', title: '', artist: '', addedBy: 'Both' });
+  const [ytConvertStatus, setYtConvertStatus] = useState('idle'); // 'idle' | 'loading' | 'done' | 'error'
+  const [ytConvertMsg, setYtConvertMsg] = useState('');
+  const [addMode, setAddMode] = useState('direct'); // 'direct' | 'ytconvert'
 
   const [form, setForm] = useState({
     title: '',
@@ -83,6 +89,59 @@ export const MusicPlayerModule = () => {
 
     setForm({ title: '', artist: '', type: 'youtube', source: '', addedBy: 'Both' });
     setIsAddOpen(false);
+    setAddMode('direct');
+  };
+
+  // YouTube → MP3 → Cloudinary conversion handler
+  const handleYouTubeConvert = async (e) => {
+    e.preventDefault();
+    if (!ytConvert.url) return;
+
+    // Extract YouTube ID from URL
+    let youtubeId = ytConvert.url.trim();
+    const ytMatch = youtubeId.match(/(?:youtu\.be\/|youtube\.com\/(?:embed\/|v\/|watch\?v=|watch\?.+&v=))([\w-]{11})/);
+    if (ytMatch) youtubeId = ytMatch[1];
+    // If still looks like a full URL but no ID found
+    if (youtubeId.includes('youtube.com') || youtubeId.includes('youtu.be')) {
+      setYtConvertStatus('error');
+      setYtConvertMsg('Không nhận ra ID video YouTube. Hãy dán đúng link!');
+      return;
+    }
+
+    setYtConvertStatus('loading');
+    setYtConvertMsg('Đang kết nối và tải nhạc từ YouTube... (Ðây có thể mất 30-60 giây, thiìu kiên nhẫn nhé 💖)');
+
+    try {
+      const res = await fetch('/api/songs/youtube-to-mp3', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          youtubeId,
+          title: ytConvert.title || undefined,
+          artist: ytConvert.artist || undefined,
+          addedBy: ytConvert.addedBy,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Chuyển đổi thất bại');
+
+      setYtConvertStatus('done');
+      setYtConvertMsg(`✅ Đã lưu bài "${data.song.title}" vào danh sách thành công! Nhạc sẽ phát nền được bây giờ 🎉`);
+      // Refresh playlist
+      dispatch({ type: 'music/addSongSuccess', payload: data.song });
+      setTimeout(() => {
+        setYtConvert({ url: '', title: '', artist: '', addedBy: 'Both' });
+        setYtConvertStatus('idle');
+        setYtConvertMsg('');
+        setIsAddOpen(false);
+        setAddMode('direct');
+        // Trigger full playlist reload
+        dispatch(fetchAllAppDataAsync());
+      }, 2500);
+    } catch (err) {
+      setYtConvertStatus('error');
+      setYtConvertMsg(`❌ Lỗi: ${err.message}`);
+    }
   };
 
   const handleTuneInPartner = () => {
@@ -519,95 +578,221 @@ export const MusicPlayerModule = () => {
       {/* Add Song Modal */}
       {isAddOpen && (
         <div className="modal-overlay">
-          <div className="glass-panel modal-box max-w-md p-6 border border-white/20 shadow-2xl space-y-4">
+          <div className="glass-panel modal-box max-w-lg p-6 border border-white/20 shadow-2xl space-y-4">
             <h3 className="text-lg font-bold font-sans flex items-center gap-2">
-              <Plus className="w-5 h-5 text-theme-primary" /> Thêm Bài Hát Mới Vào Playlist
+              <Plus className="w-5 h-5 text-theme-primary" /> Thêm Bài Hát Vào Playlist
             </h3>
 
-            <form onSubmit={handleAddSong} className="space-y-3 text-xs">
-              <div>
-                <label className="block font-bold mb-1">Tên Bài Hát *</label>
-                <input
-                  type="text"
-                  required
-                  value={form.title}
-                  onChange={(e) => setForm({ ...form, title: e.target.value })}
-                  placeholder="Ví dụ: Một Đời, Ánh Nắng Của Anh..."
-                  className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
-                />
-              </div>
+            {/* Mode Toggle Tabs */}
+            <div className="flex rounded-2xl bg-black/20 p-1 gap-1">
+              <button
+                type="button"
+                onClick={() => { setAddMode('ytconvert'); setYtConvertStatus('idle'); setYtConvertMsg(''); }}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${addMode === 'ytconvert' ? 'bg-rose-500 text-white shadow-md' : 'text-theme-muted hover:text-theme-text'}`}
+              >
+                🎵 YouTube → MP3
+                <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[9px]">PHÁT NỀN</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setAddMode('direct')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${addMode === 'direct' ? 'bg-white/15 text-theme-text shadow' : 'text-theme-muted hover:text-theme-text'}`}
+              >
+                🔗 Thêm Link Trực Tiếp
+              </button>
+            </div>
 
-              <div>
-                <label className="block font-bold mb-1">Ca Sĩ / Trình Bày</label>
-                <input
-                  type="text"
-                  value={form.artist}
-                  onChange={(e) => setForm({ ...form, artist: e.target.value })}
-                  placeholder="Ví dụ: Đức Phúc, Ed Sheeran..."
-                  className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
-                />
-              </div>
+            {/* ─── YouTube → MP3 Converter Tab ─── */}
+            {addMode === 'ytconvert' && (
+              <div className="space-y-3">
+                {/* Info banner */}
+                <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400 flex items-start gap-2">
+                  <span className="text-base leading-none">✨</span>
+                  <p>
+                    Dán link YouTube vào đây, hệ thống sẽ tự động <strong>chuyển đổi thành MP3</strong> và lưu lên đám mây.
+                    Nhạc MP3 sẽ <strong>phát được nền khi bạn switch app!</strong>
+                  </p>
+                </div>
 
-              <div>
-                <label className="block font-bold mb-1">Nền Tảng / Nguồn Nhạc</label>
-                <select
-                  value={form.type}
-                  onChange={(e) => setForm({ ...form, type: e.target.value })}
-                  className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-sans"
-                >
-                  <option value="youtube" className="bg-zinc-900 text-white">YouTube / YouTube Music (Link hoặc ID)</option>
-                  <option value="spotify" className="bg-zinc-900 text-white">Spotify Track (ID hoặc Link)</option>
-                  <option value="audio" className="bg-zinc-900 text-white">Link MP3 / Stream Trực Tiếp</option>
-                </select>
-              </div>
+                <form onSubmit={handleYouTubeConvert} className="space-y-3 text-xs">
+                  <div>
+                    <label className="block font-bold mb-1">Link YouTube *</label>
+                    <input
+                      type="text"
+                      required
+                      value={ytConvert.url}
+                      onChange={(e) => setYtConvert({ ...ytConvert, url: e.target.value })}
+                      placeholder="https://www.youtube.com/watch?v=xxxx hoặc https://youtu.be/xxxx"
+                      className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                      disabled={ytConvertStatus === 'loading'}
+                    />
+                  </div>
 
-              <div>
-                <label className="block font-bold mb-1">Link / ID Bài Hát *</label>
-                <input
-                  type="text"
-                  required
-                  value={form.source}
-                  onChange={(e) => setForm({ ...form, source: e.target.value })}
-                  placeholder="Dán link YouTube / Spotify / MP3 vào đây"
-                  className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
-                />
-                <p className="text-[10px] text-theme-muted mt-1 italic">
-                  💡 Nên dùng link YouTube/Spotify hoặc link MP3 trực tiếp để phát chất lượng cao nhất!
-                </p>
-              </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-bold mb-1">Tên Bài Hát (tùy chọn)</label>
+                      <input
+                        type="text"
+                        value={ytConvert.title}
+                        onChange={(e) => setYtConvert({ ...ytConvert, title: e.target.value })}
+                        placeholder="Tự động lấy từ YouTube"
+                        className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                        disabled={ytConvertStatus === 'loading'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold mb-1">Ca Sĩ (tùy chọn)</label>
+                      <input
+                        type="text"
+                        value={ytConvert.artist}
+                        onChange={(e) => setYtConvert({ ...ytConvert, artist: e.target.value })}
+                        placeholder="Tự động lấy từ YouTube"
+                        className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                        disabled={ytConvertStatus === 'loading'}
+                      />
+                    </div>
+                  </div>
 
-              <div>
-                <label className="block font-bold mb-1">Người Thêm Bài Hát</label>
-                <select
-                  value={form.addedBy}
-                  onChange={(e) => setForm({ ...form, addedBy: e.target.value })}
-                  className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-sans"
-                >
-                  <option value="Anh" className="bg-zinc-900 text-white">{couple.user1?.name || 'Anh'}</option>
-                  <option value="Em" className="bg-zinc-900 text-white">{couple.user2?.name || 'Em'}</option>
-                  <option value="Both" className="bg-zinc-900 text-white">Cả hai đứa</option>
-                </select>
-              </div>
+                  <div>
+                    <label className="block font-bold mb-1">Người Thêm</label>
+                    <select
+                      value={ytConvert.addedBy}
+                      onChange={(e) => setYtConvert({ ...ytConvert, addedBy: e.target.value })}
+                      className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-sans"
+                      disabled={ytConvertStatus === 'loading'}
+                    >
+                      <option value="Anh" className="bg-zinc-900 text-white">{couple.user1?.name || 'Anh'}</option>
+                      <option value="Em" className="bg-zinc-900 text-white">{couple.user2?.name || 'Em'}</option>
+                      <option value="Both" className="bg-zinc-900 text-white">Cả hai đứa</option>
+                    </select>
+                  </div>
 
-              <div className="flex gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setIsAddOpen(false)}
-                  className="flex-1 py-2.5 rounded-xl bg-white/10 font-semibold hover:bg-white/20"
-                >
-                  Hủy
-                </button>
-                <button
-                  type="submit"
-                  className="flex-1 py-2.5 rounded-xl bg-theme-primary text-black font-bold hover:opacity-90 shadow-md"
-                >
-                  Lưu Bài Hát 🎵
-                </button>
+                  {/* Status / Progress */}
+                  {ytConvertStatus !== 'idle' && (
+                    <div className={`p-3 rounded-xl text-xs border flex items-center gap-2 ${
+                      ytConvertStatus === 'loading' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' :
+                      ytConvertStatus === 'done'    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                                                     'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}>
+                      {ytConvertStatus === 'loading' && (
+                        <div className="w-4 h-4 rounded-full border-2 border-amber-400 border-t-transparent animate-spin flex-shrink-0" />
+                      )}
+                      <span>{ytConvertMsg}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => { setIsAddOpen(false); setAddMode('direct'); setYtConvertStatus('idle'); setYtConvertMsg(''); }}
+                      className="flex-1 py-2.5 rounded-xl bg-white/10 font-semibold hover:bg-white/20 text-xs"
+                      disabled={ytConvertStatus === 'loading'}
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={ytConvertStatus === 'loading' || ytConvertStatus === 'done'}
+                      className="flex-1 py-2.5 rounded-xl bg-rose-500 text-white font-bold hover:opacity-90 shadow-md text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {ytConvertStatus === 'loading' ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                          Đang Chuyển Đổi...
+                        </>
+                      ) : ytConvertStatus === 'done' ? '✅ Xong!' : '🎵 Chuyển Đổi & Lưu'}
+                    </button>
+                  </div>
+                </form>
               </div>
-            </form>
+            )}
+
+            {/* ─── Direct Link Tab ─── */}
+            {addMode === 'direct' && (
+              <form onSubmit={handleAddSong} className="space-y-3 text-xs">
+                <div>
+                  <label className="block font-bold mb-1">Tên Bài Hát *</label>
+                  <input
+                    type="text"
+                    required
+                    value={form.title}
+                    onChange={(e) => setForm({ ...form, title: e.target.value })}
+                    placeholder="Ví dụ: Một Đời, Ánh Nắng Của Anh..."
+                    className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold mb-1">Ca Sĩ / Trình Bày</label>
+                  <input
+                    type="text"
+                    value={form.artist}
+                    onChange={(e) => setForm({ ...form, artist: e.target.value })}
+                    placeholder="Ví dụ: Đức Phúc, Ed Sheeran..."
+                    className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold mb-1">Nền Tảng / Nguồn Nhạc</label>
+                  <select
+                    value={form.type}
+                    onChange={(e) => setForm({ ...form, type: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-sans"
+                  >
+                    <option value="youtube" className="bg-zinc-900 text-white">YouTube (nhúng iframe)</option>
+                    <option value="spotify" className="bg-zinc-900 text-white">Spotify Track (ID hoặc Link)</option>
+                    <option value="audio" className="bg-zinc-900 text-white">Link MP3 / Stream Trực Tiếp</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="block font-bold mb-1">Link / ID Bài Hát *</label>
+                  <input
+                    type="text"
+                    required
+                    value={form.source}
+                    onChange={(e) => setForm({ ...form, source: e.target.value })}
+                    placeholder="Dán link YouTube / Spotify / MP3 vào đây"
+                    className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                  />
+                </div>
+
+                <div>
+                  <label className="block font-bold mb-1">Người Thêm Bài Hát</label>
+                  <select
+                    value={form.addedBy}
+                    onChange={(e) => setForm({ ...form, addedBy: e.target.value })}
+                    className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-sans"
+                  >
+                    <option value="Anh" className="bg-zinc-900 text-white">{couple.user1?.name || 'Anh'}</option>
+                    <option value="Em" className="bg-zinc-900 text-white">{couple.user2?.name || 'Em'}</option>
+                    <option value="Both" className="bg-zinc-900 text-white">Cả hai đứa</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-2 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setIsAddOpen(false)}
+                    className="flex-1 py-2.5 rounded-xl bg-white/10 font-semibold hover:bg-white/20"
+                  >
+                    Hủy
+                  </button>
+                  <button
+                    type="submit"
+                    className="flex-1 py-2.5 rounded-xl bg-theme-primary text-black font-bold hover:opacity-90 shadow-md"
+                  >
+                    Lưu Bài Hát 🎵
+                  </button>
+                </div>
+              </form>
+            )}
           </div>
         </div>
       )}
+
+
 
     </div>
   );

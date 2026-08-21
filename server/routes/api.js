@@ -1,5 +1,6 @@
 import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
+import ytdl from '@distube/ytdl-core';
 import { Couple, Milestone, Gallery, Song, Reminder, LoveNote, Bucket } from '../models/Schema.js';
 
 const router = express.Router();
@@ -142,6 +143,82 @@ router.post('/upload', async (req, res) => {
   } catch (err) {
     console.error('Cloudinary upload error:', err);
     res.status(500).json({ error: err.message });
+  }
+});
+
+// YouTube → MP3 → Cloudinary Converter API
+router.post('/songs/youtube-to-mp3', async (req, res) => {
+  const { youtubeId, title, artist, addedBy } = req.body;
+  if (!youtubeId) {
+    return res.status(400).json({ error: 'Missing youtubeId' });
+  }
+
+  const youtubeUrl = `https://www.youtube.com/watch?v=${youtubeId}`;
+
+  try {
+    // Validate the video exists and is accessible
+    const info = await ytdl.getInfo(youtubeUrl);
+    const videoTitle = title || info.videoDetails.title;
+    const videoAuthor = artist || info.videoDetails.author?.name || 'Unknown Artist';
+
+    // Stream audio → Cloudinary upload
+    const cloudinaryResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'video',       // Cloudinary uses 'video' type for audio files too
+          folder: 'love_website_audio',
+          public_id: `yt_${youtubeId}`,  // Deduplicate: same video = same Cloudinary ID
+          overwrite: false,              // Don't re-upload if already exists
+          format: 'mp3',
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+
+      // Pipe highest quality audio stream directly to Cloudinary
+      ytdl(youtubeUrl, {
+        filter: 'audioonly',
+        quality: 'highestaudio',
+      }).pipe(uploadStream);
+    });
+
+    // Save to database as audio type (enables background playback!)
+    const newSong = await Song.create({
+      title: videoTitle,
+      artist: videoAuthor,
+      type: 'audio',                        // HTML5 audio → plays in background
+      source: cloudinaryResult.secure_url,  // Cloudinary permanent URL
+      addedBy: addedBy || 'Both',
+      originalYoutubeId: youtubeId,
+    });
+
+    res.status(201).json({
+      success: true,
+      song: newSong,
+      cloudinaryUrl: cloudinaryResult.secure_url,
+    });
+  } catch (err) {
+    console.error('YouTube to MP3 conversion error:', err.message);
+    // Fallback: check if already uploaded to Cloudinary
+    if (err.message?.includes('already exists') || err.http_code === 400) {
+      try {
+        const existing = await cloudinary.api.resource(`love_website_audio/yt_${youtubeId}`, { resource_type: 'video' });
+        const newSong = await Song.create({
+          title,
+          artist,
+          type: 'audio',
+          source: existing.secure_url,
+          addedBy: addedBy || 'Both',
+          originalYoutubeId: youtubeId,
+        });
+        return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url });
+      } catch (e) {
+        // Ignore fallback error
+      }
+    }
+    res.status(500).json({ error: `Không thể chuyển đổi: ${err.message}` });
   }
 });
 
