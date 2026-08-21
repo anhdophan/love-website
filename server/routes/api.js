@@ -260,20 +260,25 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
       noWarnings: true,
       noCheckCertificates: true,
       userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      extractorArgs: 'youtube:player_client=mweb,android,web',
+      extractorArgs: 'youtube:player_client=android,web',
       addHeader: ['Accept-Language: en-US,en;q=0.9'],
       ...(COOKIES_FILE ? { cookies: COOKIES_FILE } : {}),
     };
 
     // ── Step 1: Get video metadata (title, artist) ────────────────────────────
     console.log(`[YouTube→MP3 Log] 🔍 Đang đọc thông tin metadata video...`);
-    const info = await youtubedl(youtubeUrl, {
-      ...ytdlBaseOpts,
-      dumpSingleJson: true,
-    });
+    let info = {};
+    try {
+      info = await youtubedl(youtubeUrl, {
+        ...ytdlBaseOpts,
+        dumpSingleJson: true,
+      });
+    } catch (infoErr) {
+      console.warn(`[YouTube→MP3 Warning] dumpSingleJson failed: ${infoErr.message}`);
+    }
 
-    const videoTitle  = title  || info.title   || 'Unknown Title';
-    const videoAuthor = artist || info.uploader || info.channel || 'Unknown Artist';
+    const videoTitle  = title  || info.title   || `Video YouTube (${cleanId})`;
+    const videoAuthor = artist || info.uploader || info.channel || 'YouTube Artist';
 
     console.log(`[YouTube→MP3 Log] 📌 Đã lấy metadata: "${videoTitle}" bởi ${videoAuthor}`);
 
@@ -308,9 +313,10 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
         }
       );
 
+      // 'bestaudio/b/best' allows ANY audio format (m4a, webm, opus, or best video+audio combined fallback)
       const ytProcess = ytdlExec(youtubeUrl, {
         ...ytdlBaseOpts,
-        format: 'bestaudio[ext=m4a]/bestaudio/best',
+        format: 'bestaudio/b/best',
         output: '-',    // pipe to stdout, no temp file
       }, { stdio: ['ignore', 'pipe', 'ignore'] });
 
