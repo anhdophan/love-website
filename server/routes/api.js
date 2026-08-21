@@ -12,10 +12,10 @@ import { Couple, Milestone, Gallery, Song, Reminder, LoveNote, Bucket } from '..
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-// Configure Multer for in-memory file uploads (max 50MB for audio files)
+// Configure Multer for in-memory file uploads (max 200MB for audio files)
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 50 * 1024 * 1024 },
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB max limit
 });
 
 // ── YouTube Cookie Auth Setup ────────────────────────────────────────────────
@@ -186,12 +186,6 @@ router.post('/upload', async (req, res) => {
     console.error('Cloudinary upload error:', err);
     res.status(500).json({ error: err.message });
   }
-});
-
-// Configure Multer for in-memory file uploads (max 200MB for audio files)
-const upload = multer({
-  storage: multer.memoryStorage(),
-  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB max limit
 });
 
 // Direct MP3 File Upload API (Upload local audio file to Cloudinary & DB)
