@@ -1,6 +1,7 @@
 import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
-import youtubedl, { exec as ytdlExec } from 'youtube-dl-exec';
+import youtubedl from 'youtube-dl-exec';
+const ytdlExec = youtubedl.exec.bind(youtubedl);
 import { Couple, Milestone, Gallery, Song, Reminder, LoveNote, Bucket } from '../models/Schema.js';
 
 const router = express.Router();
