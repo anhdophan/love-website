@@ -1,6 +1,6 @@
 import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
-import ytdl from '@distube/ytdl-core';
+import youtubedl, { exec as ytdlExec } from 'youtube-dl-exec';
 import { Couple, Milestone, Gallery, Song, Reminder, LoveNote, Bucket } from '../models/Schema.js';
 
 const router = express.Router();
@@ -146,30 +146,54 @@ router.post('/upload', async (req, res) => {
   }
 });
 
-// YouTube → MP3 → Cloudinary Converter API
+// YouTube → MP3 → Cloudinary Converter API (using yt-dlp via youtube-dl-exec)
 router.post('/songs/youtube-to-mp3', async (req, res) => {
   const { youtubeId, title, artist, addedBy } = req.body;
   if (!youtubeId) {
     return res.status(400).json({ error: 'Missing youtubeId' });
   }
 
-  const youtubeUrl = `https://www.youtube.com/watch?v=${youtubeId}`;
+  // Clean YouTube ID (strip playlist params if any)
+  const cleanId = youtubeId.split('&')[0].split('?')[0].trim();
+  const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
   try {
-    // Validate the video exists and is accessible
-    const info = await ytdl.getInfo(youtubeUrl);
-    const videoTitle = title || info.videoDetails.title;
-    const videoAuthor = artist || info.videoDetails.author?.name || 'Unknown Artist';
+    // ── Step 1: Get video metadata (title, artist) ────────────────────────────
+    const info = await youtubedl(youtubeUrl, {
+      dumpSingleJson: true,
+      noPlaylist: true,
+      noWarnings: true,
+      callHome: false,
+      noCheckCertificates: true,
+    });
 
-    // Stream audio → Cloudinary upload
+    const videoTitle  = title  || info.title             || 'Unknown Title';
+    const videoAuthor = artist || info.uploader          || info.channel || 'Unknown Artist';
+
+    // ── Step 2: Check Cloudinary dedup (don't re-convert same video) ──────────
+    const cloudinaryPublicId = `love_website_audio/yt_${cleanId}`;
+    try {
+      const existing = await cloudinary.api.resource(cloudinaryPublicId, { resource_type: 'video' });
+      // Already exists — just save to DB and return
+      const newSong = await Song.create({
+        title: videoTitle, artist: videoAuthor,
+        type: 'audio', source: existing.secure_url,
+        addedBy: addedBy || 'Both', originalYoutubeId: cleanId,
+      });
+      return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url, cached: true });
+    } catch (_) {
+      // Not found on Cloudinary → proceed with download
+    }
+
+    // ── Step 3: Stream audio from yt-dlp → Cloudinary ────────────────────────
+    // yt-dlp output: '-' means write to stdout (stream mode, no temp file needed)
     const cloudinaryResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
-          resource_type: 'video',       // Cloudinary uses 'video' type for audio files too
+          resource_type: 'video',
           folder: 'love_website_audio',
-          public_id: `yt_${youtubeId}`,  // Deduplicate: same video = same Cloudinary ID
-          overwrite: false,              // Don't re-upload if already exists
-          format: 'mp3',
+          public_id: `yt_${cleanId}`,
+          overwrite: false,
         },
         (error, result) => {
           if (error) reject(error);
@@ -177,21 +201,30 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
         }
       );
 
-      // Pipe highest quality audio stream directly to Cloudinary
-      ytdl(youtubeUrl, {
-        filter: 'audioonly',
-        quality: 'highestaudio',
-      }).pipe(uploadStream);
+      // Spawn yt-dlp: extract best audio, pipe raw bytes to stdout
+      const ytProcess = ytdlExec(youtubeUrl, {
+        format: 'bestaudio[ext=m4a]/bestaudio/best',
+        output: '-',          // stdout stream (no file download)
+        noPlaylist: true,
+        noWarnings: true,
+        callHome: false,
+        noCheckCertificates: true,
+      }, { stdio: ['ignore', 'pipe', 'ignore'] });
+
+      ytProcess.stdout.pipe(uploadStream);
+
+      ytProcess.on('error', (err) => reject(new Error(`yt-dlp error: ${err.message}`)));
+      ytProcess.stdout.on('error', (err) => reject(new Error(`Stream error: ${err.message}`)));
     });
 
-    // Save to database as audio type (enables background playback!)
+    // ── Step 4: Save to DB ────────────────────────────────────────────────────
     const newSong = await Song.create({
       title: videoTitle,
       artist: videoAuthor,
-      type: 'audio',                        // HTML5 audio → plays in background
-      source: cloudinaryResult.secure_url,  // Cloudinary permanent URL
+      type: 'audio',                         // HTML5 <audio> → background playback ✅
+      source: cloudinaryResult.secure_url,   // Permanent Cloudinary URL
       addedBy: addedBy || 'Both',
-      originalYoutubeId: youtubeId,
+      originalYoutubeId: cleanId,
     });
 
     res.status(201).json({
@@ -199,28 +232,13 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
       song: newSong,
       cloudinaryUrl: cloudinaryResult.secure_url,
     });
+
   } catch (err) {
-    console.error('YouTube to MP3 conversion error:', err.message);
-    // Fallback: check if already uploaded to Cloudinary
-    if (err.message?.includes('already exists') || err.http_code === 400) {
-      try {
-        const existing = await cloudinary.api.resource(`love_website_audio/yt_${youtubeId}`, { resource_type: 'video' });
-        const newSong = await Song.create({
-          title,
-          artist,
-          type: 'audio',
-          source: existing.secure_url,
-          addedBy: addedBy || 'Both',
-          originalYoutubeId: youtubeId,
-        });
-        return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url });
-      } catch (e) {
-        // Ignore fallback error
-      }
-    }
+    console.error('[YouTube→MP3] Error:', err.message);
     res.status(500).json({ error: `Không thể chuyển đổi: ${err.message}` });
   }
 });
+
 
 // Songs API (Fix deletion bug)
 router.get('/songs', async (req, res) => {
