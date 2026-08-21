@@ -2,7 +2,26 @@ import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
 import youtubedl from 'youtube-dl-exec';
 const ytdlExec = youtubedl.exec.bind(youtubedl);
+import { writeFileSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
 import { Couple, Milestone, Gallery, Song, Reminder, LoveNote, Bucket } from '../models/Schema.js';
+
+// ── YouTube Cookie Auth ──────────────────────────────────────────────────────
+// Set YOUTUBE_COOKIES env var on Render with your exported cookies.txt content
+let COOKIES_FILE = null;
+if (process.env.YOUTUBE_COOKIES) {
+  try {
+    COOKIES_FILE = join(tmpdir(), 'yt_cookies.txt');
+    writeFileSync(COOKIES_FILE, process.env.YOUTUBE_COOKIES, 'utf8');
+    console.log('✅ YouTube cookies loaded from YOUTUBE_COOKIES env var');
+  } catch (e) {
+    console.warn('⚠️ Failed to write YouTube cookies:', e.message);
+    COOKIES_FILE = null;
+  }
+} else {
+  console.warn('⚠️ YOUTUBE_COOKIES env var not set — YouTube conversion may fail bot detection');
+}
 
 const router = express.Router();
 
@@ -158,24 +177,34 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
   const cleanId = youtubeId.split('&')[0].split('?')[0].trim();
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
+  if (!COOKIES_FILE) {
+    return res.status(503).json({
+      error: 'Chưa cấu hình YOUTUBE_COOKIES trên server. Vui lòng xem hướng dẫn bên dưới để thiết lập.',
+      setup_required: true,
+    });
+  }
+
   try {
-    // ── Step 1: Get video metadata (title, artist) ────────────────────────────
-    const info = await youtubedl(youtubeUrl, {
-      dumpSingleJson: true,
+    // Build shared yt-dlp options (with cookie auth)
+    const ytdlBaseOpts = {
       noPlaylist: true,
       noWarnings: true,
-      callHome: false,
-      noCheckCertificates: true,
+      cookies: COOKIES_FILE,   // ← Key: pass exported browser cookies
+    };
+
+    // ── Step 1: Get video metadata (title, artist) ────────────────────────────
+    const info = await youtubedl(youtubeUrl, {
+      ...ytdlBaseOpts,
+      dumpSingleJson: true,
     });
 
-    const videoTitle  = title  || info.title             || 'Unknown Title';
-    const videoAuthor = artist || info.uploader          || info.channel || 'Unknown Artist';
+    const videoTitle  = title  || info.title   || 'Unknown Title';
+    const videoAuthor = artist || info.uploader || info.channel || 'Unknown Artist';
 
-    // ── Step 2: Check Cloudinary dedup (don't re-convert same video) ──────────
+    // ── Step 2: Cloudinary dedup — skip re-conversion of same video ───────────
     const cloudinaryPublicId = `love_website_audio/yt_${cleanId}`;
     try {
       const existing = await cloudinary.api.resource(cloudinaryPublicId, { resource_type: 'video' });
-      // Already exists — just save to DB and return
       const newSong = await Song.create({
         title: videoTitle, artist: videoAuthor,
         type: 'audio', source: existing.secure_url,
@@ -183,11 +212,10 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
       });
       return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url, cached: true });
     } catch (_) {
-      // Not found on Cloudinary → proceed with download
+      // Not cached → proceed with download
     }
 
-    // ── Step 3: Stream audio from yt-dlp → Cloudinary ────────────────────────
-    // yt-dlp output: '-' means write to stdout (stream mode, no temp file needed)
+    // ── Step 3: Pipe yt-dlp audio stdout → Cloudinary upload stream ──────────
     const cloudinaryResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -202,20 +230,15 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
         }
       );
 
-      // Spawn yt-dlp: extract best audio, pipe raw bytes to stdout
       const ytProcess = ytdlExec(youtubeUrl, {
+        ...ytdlBaseOpts,
         format: 'bestaudio[ext=m4a]/bestaudio/best',
-        output: '-',          // stdout stream (no file download)
-        noPlaylist: true,
-        noWarnings: true,
-        callHome: false,
-        noCheckCertificates: true,
+        output: '-',    // pipe to stdout, no temp file
       }, { stdio: ['ignore', 'pipe', 'ignore'] });
 
       ytProcess.stdout.pipe(uploadStream);
-
-      ytProcess.on('error', (err) => reject(new Error(`yt-dlp error: ${err.message}`)));
-      ytProcess.stdout.on('error', (err) => reject(new Error(`Stream error: ${err.message}`)));
+      ytProcess.on('error', (err) => reject(new Error(`yt-dlp: ${err.message}`)));
+      ytProcess.stdout.on('error', (err) => reject(new Error(`stream: ${err.message}`)));
     });
 
     // ── Step 4: Save to DB ────────────────────────────────────────────────────
