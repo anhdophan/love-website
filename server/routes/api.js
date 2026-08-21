@@ -2,25 +2,47 @@ import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
 import youtubedl from 'youtube-dl-exec';
 const ytdlExec = youtubedl.exec.bind(youtubedl);
-import { writeFileSync } from 'fs';
+import multer from 'multer';
+import { writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
-import { join } from 'path';
+import { join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { Couple, Milestone, Gallery, Song, Reminder, LoveNote, Bucket } from '../models/Schema.js';
 
-// ── YouTube Cookie Auth ──────────────────────────────────────────────────────
-// Set YOUTUBE_COOKIES env var on Render with your exported cookies.txt content
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = dirname(__filename);
+
+// Configure Multer for in-memory file uploads (max 50MB for audio files)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 50 * 1024 * 1024 },
+});
+
+// ── YouTube Cookie Auth Setup ────────────────────────────────────────────────
 let COOKIES_FILE = null;
-if (process.env.YOUTUBE_COOKIES) {
-  try {
-    COOKIES_FILE = join(tmpdir(), 'yt_cookies.txt');
-    writeFileSync(COOKIES_FILE, process.env.YOUTUBE_COOKIES, 'utf8');
-    console.log('✅ YouTube cookies loaded from YOUTUBE_COOKIES env var');
-  } catch (e) {
-    console.warn('⚠️ Failed to write YouTube cookies:', e.message);
-    COOKIES_FILE = null;
+try {
+  COOKIES_FILE = join(tmpdir(), 'yt_cookies.txt');
+  let cookieContent = process.env.YOUTUBE_COOKIES;
+
+  if (!cookieContent) {
+    const fallbackPath = join(__dirname, '../config/yt_cookies.txt');
+    if (existsSync(fallbackPath)) {
+      cookieContent = readFileSync(fallbackPath, 'utf8');
+      console.log('✅ Đã load YouTube cookies từ file fallback (server/config/yt_cookies.txt)');
+    }
+  } else {
+    console.log('✅ Đã load YouTube cookies từ biến môi trường YOUTUBE_COOKIES');
   }
-} else {
-  console.warn('⚠️ YOUTUBE_COOKIES env var not set — YouTube conversion may fail bot detection');
+
+  if (cookieContent) {
+    writeFileSync(COOKIES_FILE, cookieContent, 'utf8');
+  } else {
+    COOKIES_FILE = null;
+    console.warn('⚠️ Không tìm thấy YOUTUBE_COOKIES!');
+  }
+} catch (e) {
+  console.warn('⚠️ Lỗi ghi file YouTube cookies:', e.message);
+  COOKIES_FILE = null;
 }
 
 const router = express.Router();
@@ -166,6 +188,58 @@ router.post('/upload', async (req, res) => {
   }
 });
 
+// Direct MP3 File Upload API (Upload local audio file to Cloudinary & DB)
+router.post('/songs/upload-mp3', upload.single('audioFile'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Chưa chọn file âm thanh nào (MP3/M4A/WAV...)' });
+    }
+
+    const { title, artist, addedBy } = req.body;
+    const originalFileName = req.file.originalname;
+    const cleanFileName = originalFileName.replace(/\.[^/.]+$/, '');
+    const songTitle = title?.trim() || cleanFileName || 'Bài Hát Mới';
+    const songArtist = artist?.trim() || 'Nhiều ca sĩ';
+
+    console.log(`[MP3 Upload Log] 📤 Bắt đầu tải file "${originalFileName}" (${(req.file.size / 1024 / 1024).toFixed(2)} MB) lên Cloudinary...`);
+
+    const cloudinaryResult = await new Promise((resolve, reject) => {
+      const uploadStream = cloudinary.uploader.upload_stream(
+        {
+          resource_type: 'video', // Cloudinary uses 'video' format for audio files
+          folder: 'love_website_audio',
+          public_id: `file_${Date.now()}_${Math.random().toString(36).substring(7)}`,
+        },
+        (error, result) => {
+          if (error) reject(error);
+          else resolve(result);
+        }
+      );
+      uploadStream.end(req.file.buffer);
+    });
+
+    // Save to Database as HTML5 audio (enables 100% background audio!)
+    const newSong = await Song.create({
+      title: songTitle,
+      artist: songArtist,
+      type: 'audio',
+      source: cloudinaryResult.secure_url,
+      addedBy: addedBy || 'Both',
+    });
+
+    console.log(`[MP3 Upload Log] ✅ Tải bài hát thành công: "${songTitle}" -> ${cloudinaryResult.secure_url}`);
+
+    res.status(201).json({
+      success: true,
+      song: newSong,
+      cloudinaryUrl: cloudinaryResult.secure_url,
+    });
+  } catch (err) {
+    console.error('[MP3 Upload Error Log]:', err);
+    res.status(500).json({ error: `Lỗi tải file MP3: ${err.message}` });
+  }
+});
+
 // YouTube → MP3 → Cloudinary Converter API (using yt-dlp via youtube-dl-exec)
 router.post('/songs/youtube-to-mp3', async (req, res) => {
   const { youtubeId, title, artist, addedBy } = req.body;
@@ -177,22 +251,22 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
   const cleanId = youtubeId.split('&')[0].split('?')[0].trim();
   const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
 
-  if (!COOKIES_FILE) {
-    return res.status(503).json({
-      error: 'Chưa cấu hình YOUTUBE_COOKIES trên server. Vui lòng xem hướng dẫn bên dưới để thiết lập.',
-      setup_required: true,
-    });
-  }
+  console.log(`[YouTube→MP3 Log] 🎵 Bắt đầu xử lý video ID: ${cleanId} (URL: ${youtubeUrl})`);
 
   try {
-    // Build shared yt-dlp options (with cookie auth)
+    // Build robust yt-dlp options (bypasses bot detection and "page needs to be reloaded" error)
     const ytdlBaseOpts = {
       noPlaylist: true,
       noWarnings: true,
-      cookies: COOKIES_FILE,   // ← Key: pass exported browser cookies
+      noCheckCertificates: true,
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+      extractorArgs: 'youtube:player_client=mweb,android,web',
+      addHeader: ['Accept-Language: en-US,en;q=0.9'],
+      ...(COOKIES_FILE ? { cookies: COOKIES_FILE } : {}),
     };
 
     // ── Step 1: Get video metadata (title, artist) ────────────────────────────
+    console.log(`[YouTube→MP3 Log] 🔍 Đang đọc thông tin metadata video...`);
     const info = await youtubedl(youtubeUrl, {
       ...ytdlBaseOpts,
       dumpSingleJson: true,
@@ -201,10 +275,13 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
     const videoTitle  = title  || info.title   || 'Unknown Title';
     const videoAuthor = artist || info.uploader || info.channel || 'Unknown Artist';
 
+    console.log(`[YouTube→MP3 Log] 📌 Đã lấy metadata: "${videoTitle}" bởi ${videoAuthor}`);
+
     // ── Step 2: Cloudinary dedup — skip re-conversion of same video ───────────
     const cloudinaryPublicId = `love_website_audio/yt_${cleanId}`;
     try {
       const existing = await cloudinary.api.resource(cloudinaryPublicId, { resource_type: 'video' });
+      console.log(`[YouTube→MP3 Log] ⚡ Đã tìm thấy trên Cloudinary (bản cache): ${existing.secure_url}`);
       const newSong = await Song.create({
         title: videoTitle, artist: videoAuthor,
         type: 'audio', source: existing.secure_url,
@@ -216,6 +293,7 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
     }
 
     // ── Step 3: Pipe yt-dlp audio stdout → Cloudinary upload stream ──────────
+    console.log(`[YouTube→MP3 Log] ⏳ Đang tải và stream audio sang Cloudinary...`);
     const cloudinaryResult = await new Promise((resolve, reject) => {
       const uploadStream = cloudinary.uploader.upload_stream(
         {
@@ -237,9 +315,11 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
       }, { stdio: ['ignore', 'pipe', 'ignore'] });
 
       ytProcess.stdout.pipe(uploadStream);
-      ytProcess.on('error', (err) => reject(new Error(`yt-dlp: ${err.message}`)));
-      ytProcess.stdout.on('error', (err) => reject(new Error(`stream: ${err.message}`)));
+      ytProcess.on('error', (err) => reject(new Error(`yt-dlp error: ${err.message}`)));
+      ytProcess.stdout.on('error', (err) => reject(new Error(`stream error: ${err.message}`)));
     });
+
+    console.log(`[YouTube→MP3 Log] ✅ Upload Cloudinary thành công: ${cloudinaryResult.secure_url}`);
 
     // ── Step 4: Save to DB ────────────────────────────────────────────────────
     const newSong = await Song.create({
@@ -258,8 +338,15 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
     });
 
   } catch (err) {
-    console.error('[YouTube→MP3] Error:', err.message);
-    res.status(500).json({ error: `Không thể chuyển đổi: ${err.message}` });
+    const errorMsg = err.message || err.toString();
+    console.error(`[YouTube→MP3 Error Log] ❌ Lỗi chuyển đổi (ID: ${cleanId}):`, errorMsg);
+    if (err.stderr) console.error('[YouTube→MP3 stderr]:', err.stderr);
+    if (err.stack) console.error('[YouTube→MP3 stack]:', err.stack);
+
+    res.status(500).json({
+      error: `Lỗi chuyển đổi: ${errorMsg}`,
+      details: err.stderr || null,
+    });
   }
 });
 

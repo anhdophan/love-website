@@ -9,7 +9,7 @@ import {
 import { fetchAllAppDataAsync } from '../store/slices/appDataSlices';
 import { 
   Music, Play, Pause, SkipForward, SkipBack, Plus, Trash2, 
-  Disc, Shuffle, Repeat, Heart, Sparkles, Users, Send, Radio, MessageCircle, X
+  Disc, Shuffle, Repeat, Heart, Sparkles, Users, Send, Radio, MessageCircle, X, Upload, FolderPlus
 } from 'lucide-react';
 
 export const MusicPlayerModule = () => {
@@ -28,11 +28,20 @@ export const MusicPlayerModule = () => {
   const [isDedicateOpen, setIsDedicateOpen] = useState(false);
   const [targetDedicateSong, setTargetDedicateSong] = useState(null);
   const [dedicateMessage, setDedicateMessage] = useState('');
+  
+  // Add Song Modes: 'ytconvert' | 'fileupload' | 'direct'
+  const [addMode, setAddMode] = useState('fileupload'); // Default to super fast & reliable file upload!
+
   // YouTube → MP3 conversion state
   const [ytConvert, setYtConvert] = useState({ url: '', title: '', artist: '', addedBy: 'Both' });
   const [ytConvertStatus, setYtConvertStatus] = useState('idle'); // 'idle' | 'loading' | 'done' | 'error'
   const [ytConvertMsg, setYtConvertMsg] = useState('');
-  const [addMode, setAddMode] = useState('direct'); // 'direct' | 'ytconvert'
+
+  // Direct MP3 File Upload state
+  const [audioFile, setAudioFile] = useState(null);
+  const [fileUploadMeta, setFileUploadMeta] = useState({ title: '', artist: '', addedBy: 'Both' });
+  const [fileUploadStatus, setFileUploadStatus] = useState('idle'); // 'idle' | 'loading' | 'done' | 'error'
+  const [fileUploadMsg, setFileUploadMsg] = useState('');
 
   const [form, setForm] = useState({
     title: '',
@@ -141,6 +150,50 @@ export const MusicPlayerModule = () => {
     } catch (err) {
       setYtConvertStatus('error');
       setYtConvertMsg(`❌ Lỗi: ${err.message}`);
+    }
+  };
+
+  // Direct MP3 File Upload Handler
+  const handleAudioFileUpload = async (e) => {
+    e.preventDefault();
+    if (!audioFile) {
+      setFileUploadStatus('error');
+      setFileUploadMsg('Vui lòng chọn file nhạc (MP3, M4A, WAV...) từ thiết bị!');
+      return;
+    }
+
+    setFileUploadStatus('loading');
+    setFileUploadMsg(`Đang tải file "${audioFile.name}" (${(audioFile.size / 1024 / 1024).toFixed(2)} MB) lên máy chủ...`);
+
+    try {
+      const formData = new FormData();
+      formData.append('audioFile', audioFile);
+      formData.append('title', fileUploadMeta.title);
+      formData.append('artist', fileUploadMeta.artist);
+      formData.append('addedBy', fileUploadMeta.addedBy);
+
+      const res = await fetch('/api/songs/upload-mp3', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Tải file thất bại');
+
+      setFileUploadStatus('done');
+      setFileUploadMsg(`✅ Đã tải thành công bài hát "${data.song.title}"! Nhạc MP3 sẵn sàng phát nền 🎉`);
+
+      dispatch(fetchAllAppDataAsync());
+      setTimeout(() => {
+        setAudioFile(null);
+        setFileUploadMeta({ title: '', artist: '', addedBy: 'Both' });
+        setFileUploadStatus('idle');
+        setFileUploadMsg('');
+        setIsAddOpen(false);
+      }, 2000);
+    } catch (err) {
+      setFileUploadStatus('error');
+      setFileUploadMsg(`❌ Lỗi tải file: ${err.message}`);
     }
   };
 
@@ -583,24 +636,161 @@ export const MusicPlayerModule = () => {
               <Plus className="w-5 h-5 text-theme-primary" /> Thêm Bài Hát Vào Playlist
             </h3>
 
-            {/* Mode Toggle Tabs */}
+            {/* Mode Toggle Tabs (3 Modes) */}
             <div className="flex rounded-2xl bg-black/20 p-1 gap-1">
               <button
                 type="button"
+                onClick={() => setAddMode('fileupload')}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${addMode === 'fileupload' ? 'bg-amber-500 text-black shadow-md' : 'text-theme-muted hover:text-theme-text'}`}
+              >
+                📁 Tải MP3
+                <span className="px-1.5 py-0.5 rounded-full bg-black/20 text-[9px]">MỚI ⭐</span>
+              </button>
+
+              <button
+                type="button"
                 onClick={() => { setAddMode('ytconvert'); setYtConvertStatus('idle'); setYtConvertMsg(''); }}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${addMode === 'ytconvert' ? 'bg-rose-500 text-white shadow-md' : 'text-theme-muted hover:text-theme-text'}`}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1 cursor-pointer ${addMode === 'ytconvert' ? 'bg-rose-500 text-white shadow-md' : 'text-theme-muted hover:text-theme-text'}`}
               >
                 🎵 YouTube → MP3
-                <span className="px-1.5 py-0.5 rounded-full bg-white/20 text-[9px]">PHÁT NỀN</span>
               </button>
+
               <button
                 type="button"
                 onClick={() => setAddMode('direct')}
-                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all ${addMode === 'direct' ? 'bg-white/15 text-theme-text shadow' : 'text-theme-muted hover:text-theme-text'}`}
+                className={`flex-1 py-2 rounded-xl text-xs font-bold transition-all cursor-pointer ${addMode === 'direct' ? 'bg-white/15 text-theme-text shadow' : 'text-theme-muted hover:text-theme-text'}`}
               >
-                🔗 Thêm Link Trực Tiếp
+                🔗 Thêm Link
               </button>
             </div>
+
+            {/* ─── 1. Direct MP3 File Upload Tab ─── */}
+            {addMode === 'fileupload' && (
+              <div className="space-y-3">
+                <div className="p-3 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-300 flex items-start gap-2">
+                  <span className="text-base leading-none">🚀</span>
+                  <p>
+                    <strong>Khuyên dùng:</strong> Chọn file MP3 từ máy tính hoặc điện thoại. File sẽ được lưu vĩnh viễn trên Cloudinary và <strong>phát được nền 100% khi tắt màn hình hoặc switch app!</strong>
+                  </p>
+                </div>
+
+                <form onSubmit={handleAudioFileUpload} className="space-y-3 text-xs">
+                  {/* File Selector Dropzone */}
+                  <div>
+                    <label className="block font-bold mb-1">Chọn File Nhạc (MP3, M4A, WAV, AAC...) *</label>
+                    <div className="relative border-2 border-dashed border-white/20 hover:border-amber-400/50 rounded-2xl p-4 text-center cursor-pointer transition-colors bg-black/10">
+                      <input
+                        type="file"
+                        accept="audio/*,.mp3,.m4a,.wav,.aac,.ogg,.flac"
+                        required
+                        onChange={(e) => {
+                          const file = e.target.files[0];
+                          if (file) {
+                            setAudioFile(file);
+                            // Auto-fill title if empty
+                            if (!fileUploadMeta.title) {
+                              const cleanName = file.name.replace(/\.[^/.]+$/, '');
+                              setFileUploadMeta({ ...fileUploadMeta, title: cleanName });
+                            }
+                          }
+                        }}
+                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        disabled={fileUploadStatus === 'loading'}
+                      />
+                      <div className="space-y-1">
+                        <Upload className="w-8 h-8 text-amber-400 mx-auto animate-bounce" />
+                        {audioFile ? (
+                          <div className="text-amber-300 font-bold">
+                            🎵 Đã chọn: {audioFile.name} ({(audioFile.size / 1024 / 1024).toFixed(2)} MB)
+                          </div>
+                        ) : (
+                          <>
+                            <p className="font-bold text-theme-text">Bấm vào đây hoặc kéo thả file nhạc vào đây</p>
+                            <p className="text-[10px] text-theme-muted">Hỗ trợ các định dạng: .mp3, .m4a, .wav, .aac, .ogg (Tối đa 50MB)</p>
+                          </>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="block font-bold mb-1">Tên Bài Hát (tùy chọn)</label>
+                      <input
+                        type="text"
+                        value={fileUploadMeta.title}
+                        onChange={(e) => setFileUploadMeta({ ...fileUploadMeta, title: e.target.value })}
+                        placeholder="Mặc định lấy theo tên file"
+                        className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                        disabled={fileUploadStatus === 'loading'}
+                      />
+                    </div>
+                    <div>
+                      <label className="block font-bold mb-1">Ca Sĩ (tùy chọn)</label>
+                      <input
+                        type="text"
+                        value={fileUploadMeta.artist}
+                        onChange={(e) => setFileUploadMeta({ ...fileUploadMeta, artist: e.target.value })}
+                        placeholder="Ví dụ: Ca sĩ thể hiện"
+                        className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10"
+                        disabled={fileUploadStatus === 'loading'}
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="block font-bold mb-1">Người Thêm</label>
+                    <select
+                      value={fileUploadMeta.addedBy}
+                      onChange={(e) => setFileUploadMeta({ ...fileUploadMeta, addedBy: e.target.value })}
+                      className="w-full p-2.5 rounded-xl bg-black/10 border border-white/10 font-sans"
+                      disabled={fileUploadStatus === 'loading'}
+                    >
+                      <option value="Anh" className="bg-zinc-900 text-white">{couple.user1?.name || 'Anh'}</option>
+                      <option value="Em" className="bg-zinc-900 text-white">{couple.user2?.name || 'Em'}</option>
+                      <option value="Both" className="bg-zinc-900 text-white">Cả hai đứa</option>
+                    </select>
+                  </div>
+
+                  {/* Status message */}
+                  {fileUploadStatus !== 'idle' && (
+                    <div className={`p-3 rounded-xl text-xs border flex items-center gap-2 ${
+                      fileUploadStatus === 'loading' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' :
+                      fileUploadStatus === 'done'    ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' :
+                                                     'bg-red-500/10 border-red-500/30 text-red-400'
+                    }`}>
+                      {fileUploadStatus === 'loading' && (
+                        <div className="w-4 h-4 rounded-full border-2 border-amber-400 border-t-transparent animate-spin flex-shrink-0" />
+                      )}
+                      <span>{fileUploadMsg}</span>
+                    </div>
+                  )}
+
+                  <div className="flex gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => { setIsAddOpen(false); setFileUploadStatus('idle'); setFileUploadMsg(''); }}
+                      className="flex-1 py-2.5 rounded-xl bg-white/10 font-semibold hover:bg-white/20 text-xs"
+                      disabled={fileUploadStatus === 'loading'}
+                    >
+                      Hủy
+                    </button>
+                    <button
+                      type="submit"
+                      disabled={fileUploadStatus === 'loading' || fileUploadStatus === 'done' || !audioFile}
+                      className="flex-1 py-2.5 rounded-xl bg-amber-400 text-black font-bold hover:opacity-90 shadow-md text-xs disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                    >
+                      {fileUploadStatus === 'loading' ? (
+                        <>
+                          <div className="w-3.5 h-3.5 border-2 border-black border-t-transparent rounded-full animate-spin" />
+                          Đang Tải Lên...
+                        </>
+                      ) : fileUploadStatus === 'done' ? '✅ Xong!' : '📤 Tải Lên & Lưu Bài'}
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
 
             {/* ─── YouTube → MP3 Converter Tab ─── */}
             {addMode === 'ytconvert' && (
