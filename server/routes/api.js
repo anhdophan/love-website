@@ -45,57 +45,141 @@ try {
   COOKIES_FILE = null;
 }
 
-// ── Invidious: Bypass YouTube cloud IP block ───────────────────────────────
-// Invidious is an open-source YouTube proxy. Its /latest_version endpoint
-// streams audio directly, bypassing YouTube's datacenter IP restrictions.
-const INVIDIOUS_INSTANCES = [
-  'https://inv.nadeko.net',
-  'https://invidious.privacyredirect.com',
-  'https://yt.cdaut.de',
-  'https://invidious.nerdvpn.de',
-  'https://iv.datura.network',
+// ── Multi-Provider YouTube Audio Extraction (Piped + Cobalt + Invidious) ──
+const PIPED_INSTANCES = [
+  'https://pipedapi.kavin.rocks',
+  'https://pipedapi.adminforge.de',
+  'https://pipedapi.lunar.icu',
+  'https://api.piped.yt',
+  'https://pipedapi-libre.kavin.rocks',
+  'https://pipedapi.palvelin.org',
+  'https://piped-api.garudalinux.org',
 ];
 
-async function getYouTubeAudioViaInvidious(videoId) {
+const COBALT_INSTANCES = [
+  'https://api.cobalt.tools',
+  'https://co.wuk.sh',
+];
+
+const INVIDIOUS_INSTANCES = [
+  'https://invidious.flokinet.to',
+  'https://invidious.drgns.space',
+  'https://invidious.projectsegfau.lt',
+  'https://invidious.eclipso.at',
+  'https://inv.nadeko.net',
+  'https://invidious.nerdvpn.de',
+];
+
+async function getYouTubeAudioStream(videoId) {
+  // 1. Try Piped APIs (Fastest & most reliable open-source YouTube API)
+  for (const instance of PIPED_INSTANCES) {
+    try {
+      console.log(`[Piped API] 🔍 Thử instance: ${instance}`);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 7000);
+
+      const resp = await fetch(`${instance}/streams/${videoId}`, {
+        signal: ctrl.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      });
+      clearTimeout(timer);
+
+      if (!resp.ok) { console.warn(`[Piped API] ${instance} returned ${resp.status}`); continue; }
+      const data = await resp.json();
+
+      const audioStreams = (data.audioStreams || [])
+        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+      if (audioStreams.length > 0) {
+        const best = audioStreams[0];
+        console.log(`[Piped API] ✅ Lấy audio stream thành công từ ${instance} (bitrate=${best.bitrate})`);
+        return {
+          audioUrl: best.url,
+          title: data.title || null,
+          author: data.uploader || null,
+        };
+      }
+    } catch (e) {
+      console.warn(`[Piped API] ${instance} lỗi: ${e.message}`);
+    }
+  }
+
+  // 2. Try Cobalt APIs (Direct audio downloader API)
+  for (const instance of COBALT_INSTANCES) {
+    try {
+      console.log(`[Cobalt API] 🔍 Thử instance: ${instance}`);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 7000);
+
+      const resp = await fetch(instance, {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          'Accept': 'application/json',
+          'Content-Type': 'application/json',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)',
+        },
+        body: JSON.stringify({
+          url: `https://www.youtube.com/watch?v=${videoId}`,
+          downloadMode: 'audio',
+          audioFormat: 'mp3',
+        }),
+      });
+      clearTimeout(timer);
+
+      if (!resp.ok) { console.warn(`[Cobalt API] ${instance} returned ${resp.status}`); continue; }
+      const data = await resp.json();
+
+      if (data.url) {
+        console.log(`[Cobalt API] ✅ Lấy audio stream thành công từ ${instance}`);
+        return {
+          audioUrl: data.url,
+          title: data.filename || null,
+          author: null,
+        };
+      }
+    } catch (e) {
+      console.warn(`[Cobalt API] ${instance} lỗi: ${e.message}`);
+    }
+  }
+
+  // 3. Try Invidious APIs (Backup proxy instances)
   for (const instance of INVIDIOUS_INSTANCES) {
     try {
-      console.log(`[Invidious] 🔍 Thử instance: ${instance}`);
+      console.log(`[Invidious API] 🔍 Thử instance: ${instance}`);
       const ctrl = new AbortController();
-      const timer = setTimeout(() => ctrl.abort(), 10000);
+      const timer = setTimeout(() => ctrl.abort(), 7000);
 
-      // Get video metadata + adaptive formats (audio streams)
       const apiResp = await fetch(
         `${instance}/api/v1/videos/${videoId}?fields=title,author,adaptiveFormats`,
         { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } }
       );
       clearTimeout(timer);
 
-      if (!apiResp.ok) { console.warn(`[Invidious] ${instance} API returned ${apiResp.status}`); continue; }
+      if (!apiResp.ok) { console.warn(`[Invidious API] ${instance} returned ${apiResp.status}`); continue; }
 
       const data = await apiResp.json();
-      if (data.error) { console.warn(`[Invidious] ${instance} API error: ${data.error}`); continue; }
+      if (data.error) continue;
 
-      // Find best audio-only stream
       const audioStreams = (data.adaptiveFormats || [])
         .filter(f => f.type && f.type.startsWith('audio/'))
         .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
 
-      if (!audioStreams.length) { console.warn(`[Invidious] ${instance} no audio streams`); continue; }
-
-      const best = audioStreams[0];
-      // Use Invidious proxy URL so the download goes through Invidious server
-      const proxyAudioUrl = `${instance}/latest_version?id=${videoId}&itag=${best.itag}&local=true`;
-
-      console.log(`[Invidious] ✅ Got audio stream via ${instance} (itag=${best.itag}, bitrate=${best.bitrate})`);
-      return {
-        audioUrl: proxyAudioUrl,
-        title: data.title || null,
-        author: data.author || null,
-      };
-    } catch (err) {
-      console.warn(`[Invidious] ${instance} failed: ${err.message}`);
+      if (audioStreams.length > 0) {
+        const best = audioStreams[0];
+        const proxyAudioUrl = `${instance}/latest_version?id=${videoId}&itag=${best.itag}&local=true`;
+        console.log(`[Invidious API] ✅ Lấy audio stream thành công từ ${instance}`);
+        return {
+          audioUrl: proxyAudioUrl,
+          title: data.title || null,
+          author: data.author || null,
+        };
+      }
+    } catch (e) {
+      console.warn(`[Invidious API] ${instance} lỗi: ${e.message}`);
     }
   }
+
   return null;
 }
 
@@ -330,26 +414,25 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
       return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url, cached: true });
     } catch (_) { /* not cached, proceed */ }
 
-    // ── Step 2: Get audio stream URL via Invidious ───────────────────────────
-    console.log(`[YouTube→MP3 Log] 🔍 Lấy audio stream qua Invidious...`);
-    const invResult = await getYouTubeAudioViaInvidious(cleanId);
+    // ── Step 2: Get audio stream URL via multi-provider extractor ────────────
+    console.log(`[YouTube→MP3 Log] 🔍 Lấy audio stream qua Piped/Cobalt/Invidious APIs...`);
+    const streamResult = await getYouTubeAudioStream(cleanId);
 
-    if (!invResult) {
+    if (!streamResult) {
       return res.status(502).json({
-        error: 'Tất cả Invidious instances đều thất bại. YouTube có thể đang bảo trì. Vui lòng dùng tab "📁 Tải MP3" để tải file nhạc từ máy tính!',
+        error: 'Tất cả các máy chủ trung gian (Piped/Cobalt/Invidious) đều bận. Vui lòng chọn tab "📁 Tải MP3" để chọn file nhạc từ máy tính/điện thoại!',
       });
     }
 
-    const videoTitle  = title  || invResult.title  || `Bài hát YouTube (${cleanId})`;
-    const videoAuthor = artist || invResult.author || 'YouTube Artist';
+    const videoTitle  = title  || streamResult.title  || `Bài hát YouTube (${cleanId})`;
+    const videoAuthor = artist || streamResult.author || 'YouTube Artist';
     console.log(`[YouTube→MP3 Log] 📌 Metadata: "${videoTitle}" - ${videoAuthor}`);
 
-    // ── Step 3: Stream Invidious audio URL → Cloudinary ──────────────────────
-    console.log(`[YouTube→MP3 Log] ⏳ Streaming audio → Cloudinary: ${invResult.audioUrl}`);
+    // ── Step 3: Stream audio URL → Cloudinary ────────────────────────────────
+    console.log(`[YouTube→MP3 Log] ⏳ Streaming audio → Cloudinary: ${streamResult.audioUrl}`);
     const cloudinaryResult = await new Promise(async (resolve, reject) => {
       try {
-        // Fetch from Invidious proxy (avoids IP restriction on YouTube CDN)
-        const audioResp = await fetch(invResult.audioUrl, {
+        const audioResp = await fetch(streamResult.audioUrl, {
           headers: {
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
             'Referer': 'https://www.youtube.com/',
@@ -357,7 +440,7 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
         });
 
         if (!audioResp.ok) {
-          return reject(new Error(`Invidious trả về lỗi ${audioResp.status} khi tải audio`));
+          return reject(new Error(`Máy chủ stream trả về lỗi HTTP ${audioResp.status}`));
         }
 
         const uploadStream = cloudinary.uploader.upload_stream(
