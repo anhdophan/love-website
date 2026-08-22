@@ -1,13 +1,13 @@
 import express from 'express';
 import { v2 as cloudinary } from 'cloudinary';
-import youtubedl from 'youtube-dl-exec';
-const ytdlExec = youtubedl.exec.bind(youtubedl);
 import multer from 'multer';
+import { Readable } from 'stream';
 import { writeFileSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
 import { Couple, Milestone, Gallery, Song, Reminder, LoveNote, Bucket } from '../models/Schema.js';
+
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -18,7 +18,7 @@ const upload = multer({
   limits: { fileSize: 200 * 1024 * 1024 }, // 200MB max limit
 });
 
-// ── YouTube Cookie Auth Setup ────────────────────────────────────────────────
+// ── YouTube Cookie: Load from env var or fallback file ─────────────────────
 let COOKIES_FILE = null;
 try {
   COOKIES_FILE = join(tmpdir(), 'yt_cookies.txt');
@@ -28,22 +28,77 @@ try {
     const fallbackPath = join(__dirname, '../config/yt_cookies.txt');
     if (existsSync(fallbackPath)) {
       cookieContent = readFileSync(fallbackPath, 'utf8');
-      console.log('✅ Đã load YouTube cookies từ file fallback (server/config/yt_cookies.txt)');
+      console.log('\u2705 Đã load YouTube cookies từ file fallback');
     }
   } else {
-    console.log('✅ Đã load YouTube cookies từ biến môi trường YOUTUBE_COOKIES');
+    console.log('\u2705 Đã load YouTube cookies từ biến môi trường YOUTUBE_COOKIES');
   }
 
   if (cookieContent) {
     writeFileSync(COOKIES_FILE, cookieContent, 'utf8');
   } else {
     COOKIES_FILE = null;
-    console.warn('⚠️ Không tìm thấy YOUTUBE_COOKIES!');
+    console.warn('\u26a0\ufe0f Không tìm thấy YOUTUBE_COOKIES!');
   }
 } catch (e) {
-  console.warn('⚠️ Lỗi ghi file YouTube cookies:', e.message);
+  console.warn('\u26a0\ufe0f Lỗi ghi file YouTube cookies:', e.message);
   COOKIES_FILE = null;
 }
+
+// ── Invidious: Bypass YouTube cloud IP block ───────────────────────────────
+// Invidious is an open-source YouTube proxy. Its /latest_version endpoint
+// streams audio directly, bypassing YouTube's datacenter IP restrictions.
+const INVIDIOUS_INSTANCES = [
+  'https://inv.nadeko.net',
+  'https://invidious.privacyredirect.com',
+  'https://yt.cdaut.de',
+  'https://invidious.nerdvpn.de',
+  'https://iv.datura.network',
+];
+
+async function getYouTubeAudioViaInvidious(videoId) {
+  for (const instance of INVIDIOUS_INSTANCES) {
+    try {
+      console.log(`[Invidious] 🔍 Thử instance: ${instance}`);
+      const ctrl = new AbortController();
+      const timer = setTimeout(() => ctrl.abort(), 10000);
+
+      // Get video metadata + adaptive formats (audio streams)
+      const apiResp = await fetch(
+        `${instance}/api/v1/videos/${videoId}?fields=title,author,adaptiveFormats`,
+        { signal: ctrl.signal, headers: { 'User-Agent': 'Mozilla/5.0' } }
+      );
+      clearTimeout(timer);
+
+      if (!apiResp.ok) { console.warn(`[Invidious] ${instance} API returned ${apiResp.status}`); continue; }
+
+      const data = await apiResp.json();
+      if (data.error) { console.warn(`[Invidious] ${instance} API error: ${data.error}`); continue; }
+
+      // Find best audio-only stream
+      const audioStreams = (data.adaptiveFormats || [])
+        .filter(f => f.type && f.type.startsWith('audio/'))
+        .sort((a, b) => (b.bitrate || 0) - (a.bitrate || 0));
+
+      if (!audioStreams.length) { console.warn(`[Invidious] ${instance} no audio streams`); continue; }
+
+      const best = audioStreams[0];
+      // Use Invidious proxy URL so the download goes through Invidious server
+      const proxyAudioUrl = `${instance}/latest_version?id=${videoId}&itag=${best.itag}&local=true`;
+
+      console.log(`[Invidious] ✅ Got audio stream via ${instance} (itag=${best.itag}, bitrate=${best.bitrate})`);
+      return {
+        audioUrl: proxyAudioUrl,
+        title: data.title || null,
+        author: data.author || null,
+      };
+    } catch (err) {
+      console.warn(`[Invidious] ${instance} failed: ${err.message}`);
+    }
+  }
+  return null;
+}
+
 
 const router = express.Router();
 
@@ -123,31 +178,29 @@ const seedInitialDataIfNeeded = async () => {
   }
 };
 
-// GET All App Data
+// GET All App Data — parallel queries for maximum speed
 router.get('/all', async (req, res) => {
   try {
     await seedInitialDataIfNeeded();
-    let couple = await Couple.findOne();
-    const milestones = await Milestone.find().sort({ createdAt: -1 });
-    const gallery = await Gallery.find().sort({ createdAt: -1 });
-    const playlist = await Song.find().sort({ createdAt: -1 });
-    const reminders = await Reminder.find().sort({ createdAt: -1 });
-    const loveNotes = await LoveNote.find().sort({ createdAt: -1 });
-    const bucketList = await Bucket.find().sort({ createdAt: 1 });
 
-    res.json({
-      couple,
-      milestones,
-      gallery,
-      playlist,
-      reminders,
-      loveNotes,
-      bucketList,
-    });
+    // Run all 7 DB queries in parallel (was sequential, causing slow first load!)
+    const [couple, milestones, gallery, playlist, reminders, loveNotes, bucketList] =
+      await Promise.all([
+        Couple.findOne(),
+        Milestone.find().sort({ createdAt: -1 }),
+        Gallery.find().sort({ createdAt: -1 }),
+        Song.find().sort({ createdAt: -1 }),
+        Reminder.find().sort({ createdAt: -1 }),
+        LoveNote.find().sort({ createdAt: -1 }),
+        Bucket.find().sort({ createdAt: 1 }),
+      ]);
+
+    res.json({ couple, milestones, gallery, playlist, reminders, loveNotes, bucketList });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 // Couple API
 router.put('/couple', async (req, res) => {
@@ -250,7 +303,8 @@ router.post('/songs/upload-mp3', (req, res, next) => {
   }
 });
 
-// YouTube → MP3 → Cloudinary Converter API (using yt-dlp via youtube-dl-exec)
+// YouTube → MP3 → Cloudinary Converter API
+// Uses Invidious (YouTube proxy) to bypass datacenter IP blocking on Render.
 router.post('/songs/youtube-to-mp3', async (req, res) => {
   const { youtubeId, title, artist, addedBy } = req.body;
   if (!youtubeId) {
@@ -259,16 +313,14 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
 
   // Clean YouTube ID (strip playlist params if any)
   const cleanId = youtubeId.split('&')[0].split('?')[0].trim();
-  const youtubeUrl = `https://www.youtube.com/watch?v=${cleanId}`;
-
-  console.log(`[YouTube→MP3 Log] 🎵 Bắt đầu xử lý video ID: ${cleanId} (URL: ${youtubeUrl})`);
+  console.log(`[YouTube→MP3 Log] 🎵 Bắt đầu xử lý video ID: ${cleanId}`);
 
   try {
-    // ── Step 1: Check Cloudinary dedup first (avoid running yt-dlp if cached!) ─
+    // ── Step 1: Cloudinary dedup — skip if already converted ─────────────────────
     const cloudinaryPublicId = `love_website_audio/yt_${cleanId}`;
     try {
       const existing = await cloudinary.api.resource(cloudinaryPublicId, { resource_type: 'video' });
-      console.log(`[YouTube→MP3 Log] ⚡ Đã tìm thấy trên Cloudinary (bản cache): ${existing.secure_url}`);
+      console.log(`[YouTube→MP3 Log] ⚡ Cache hit trên Cloudinary: ${existing.secure_url}`);
       const newSong = await Song.create({
         title: title || `Video YouTube (${cleanId})`,
         artist: artist || 'YouTube Artist',
@@ -276,104 +328,68 @@ router.post('/songs/youtube-to-mp3', async (req, res) => {
         addedBy: addedBy || 'Both', originalYoutubeId: cleanId,
       });
       return res.status(201).json({ success: true, song: newSong, cloudinaryUrl: existing.secure_url, cached: true });
-    } catch (_) {
-      // Not cached → proceed with download
-    }
+    } catch (_) { /* not cached, proceed */ }
 
-    // Build robust yt-dlp options (bypasses bot detection and "page needs to be reloaded" error)
-    const ytdlBaseOpts = {
-      noPlaylist: true,
-      noWarnings: true,
-      noCheckCertificates: true,
-      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
-      extractorArgs: 'youtube:player_client=android,web',
-      addHeader: ['Accept-Language: en-US,en;q=0.9'],
-      ...(COOKIES_FILE ? { cookies: COOKIES_FILE } : {}),
-    };
+    // ── Step 2: Get audio stream URL via Invidious ───────────────────────────
+    console.log(`[YouTube→MP3 Log] 🔍 Lấy audio stream qua Invidious...`);
+    const invResult = await getYouTubeAudioViaInvidious(cleanId);
 
-    // ── Step 2: Get video metadata (title, artist) safely ──────────────────────
-    console.log(`[YouTube→MP3 Log] 🔍 Đang đọc thông tin metadata video...`);
-    let videoTitle = title;
-    let videoAuthor = artist;
-
-    if (!videoTitle || !videoAuthor) {
-      try {
-        const info = await youtubedl(youtubeUrl, {
-          ...ytdlBaseOpts,
-          dumpSingleJson: true,
-        });
-        if (!videoTitle) videoTitle = info.title || `Video YouTube (${cleanId})`;
-        if (!videoAuthor) videoAuthor = info.uploader || info.channel || 'YouTube Artist';
-      } catch (infoErr) {
-        console.warn(`[YouTube→MP3 Warning] dumpSingleJson metadata skipped: ${infoErr.message}`);
-        if (!videoTitle) videoTitle = `Bài hát YouTube (${cleanId})`;
-        if (!videoAuthor) videoAuthor = 'YouTube Artist';
-      }
-    }
-
-    console.log(`[YouTube→MP3 Log] 📌 Metadata: "${videoTitle}" bởi ${videoAuthor}`);
-
-    // ── Step 3: Pipe yt-dlp audio stdout → Cloudinary upload stream safely ────
-    console.log(`[YouTube→MP3 Log] ⏳ Đang tải và stream audio sang Cloudinary...`);
-    const cloudinaryResult = await new Promise((resolve, reject) => {
-      let isResolved = false;
-
-      const uploadStream = cloudinary.uploader.upload_stream(
-        {
-          resource_type: 'video',
-          folder: 'love_website_audio',
-          public_id: `yt_${cleanId}`,
-          overwrite: false,
-        },
-        (error, result) => {
-          if (isResolved) return;
-          if (error) {
-            isResolved = true;
-            reject(error);
-          } else {
-            isResolved = true;
-            resolve(result);
-          }
-        }
-      );
-
-      // Execute ytdlExec safely
-      const ytPromise = ytdlExec(youtubeUrl, {
-        ...ytdlBaseOpts,
-        format: 'bestaudio/b/best',
-        output: '-',    // pipe to stdout, no temp file
-      }, { stdio: ['ignore', 'pipe', 'ignore'] });
-
-      // Catch top-level child process promise error so Node process NEVER crashes!
-      ytPromise.catch(procErr => {
-        console.warn('[YouTube→MP3 ChildProcess Promise Caught]:', procErr.message);
-        if (!isResolved) {
-          isResolved = true;
-          reject(new Error(`YouTube không cho phép tải trực tiếp trên Render Cloud IP (${procErr.message}). Vui lòng dùng tab "📁 Tải MP3" để chọn file nhạc từ máy!`));
-        }
+    if (!invResult) {
+      return res.status(502).json({
+        error: 'Tất cả Invidious instances đều thất bại. YouTube có thể đang bảo trì. Vui lòng dùng tab "📁 Tải MP3" để tải file nhạc từ máy tính!',
       });
+    }
 
-      if (ytPromise.stdout) {
-        ytPromise.stdout.pipe(uploadStream);
-        ytPromise.stdout.on('error', (err) => {
-          if (!isResolved) {
-            isResolved = true;
-            reject(new Error(`Stream error: ${err.message}`));
-          }
+    const videoTitle  = title  || invResult.title  || `Bài hát YouTube (${cleanId})`;
+    const videoAuthor = artist || invResult.author || 'YouTube Artist';
+    console.log(`[YouTube→MP3 Log] 📌 Metadata: "${videoTitle}" - ${videoAuthor}`);
+
+    // ── Step 3: Stream Invidious audio URL → Cloudinary ──────────────────────
+    console.log(`[YouTube→MP3 Log] ⏳ Streaming audio → Cloudinary: ${invResult.audioUrl}`);
+    const cloudinaryResult = await new Promise(async (resolve, reject) => {
+      try {
+        // Fetch from Invidious proxy (avoids IP restriction on YouTube CDN)
+        const audioResp = await fetch(invResult.audioUrl, {
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Referer': 'https://www.youtube.com/',
+          },
         });
-      } else {
-        reject(new Error('Không thể khởi tạo luồng dữ liệu yt-dlp'));
+
+        if (!audioResp.ok) {
+          return reject(new Error(`Invidious trả về lỗi ${audioResp.status} khi tải audio`));
+        }
+
+        const uploadStream = cloudinary.uploader.upload_stream(
+          {
+            resource_type: 'video', // Cloudinary uses 'video' for audio files
+            folder: 'love_website_audio',
+            public_id: `yt_${cleanId}`,
+            overwrite: false,
+          },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+
+        // Convert Web ReadableStream (fetch API) to Node.js Readable for piping
+        const nodeStream = Readable.fromWeb(audioResp.body);
+        nodeStream.pipe(uploadStream);
+        nodeStream.on('error', (err) => reject(new Error(`Stream error: ${err.message}`)));
+      } catch (err) {
+        reject(err);
       }
     });
 
     console.log(`[YouTube→MP3 Log] ✅ Upload Cloudinary thành công: ${cloudinaryResult.secure_url}`);
 
-    // ── Step 4: Save to DB ────────────────────────────────────────────────────
+    // ── Step 4: Save to DB ──────────────────────────────────────────────────
     const newSong = await Song.create({
       title: videoTitle,
       artist: videoAuthor,
-      type: 'audio',                         // HTML5 <audio> → background playback ✅
-      source: cloudinaryResult.secure_url,   // Permanent Cloudinary URL
+      type: 'audio',                        // HTML5 <audio> → background playback ✅
+      source: cloudinaryResult.secure_url,  // Permanent Cloudinary URL
       addedBy: addedBy || 'Both',
       originalYoutubeId: cleanId,
     });
