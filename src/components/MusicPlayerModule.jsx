@@ -809,12 +809,30 @@ export const MusicPlayerModule = () => {
             {addMode === 'ytconvert' && (
               <div className="space-y-3">
                 {/* Info banner */}
-                <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400 flex items-start gap-2">
-                  <span className="text-base leading-none">✨</span>
-                  <p>
-                    Dán link YouTube vào đây, hệ thống sẽ tự động <strong>chuyển đổi thành MP3</strong> và lưu lên đám mây.
-                    Nhạc MP3 sẽ <strong>phát được nền khi bạn switch app!</strong>
-                  </p>
+                <div className="p-3 rounded-2xl bg-emerald-500/10 border border-emerald-500/20 text-xs text-emerald-400 space-y-2">
+                  <div className="flex items-start gap-2">
+                    <span className="text-base leading-none">✨</span>
+                    <p>
+                      Dán link YouTube vào đây, hệ thống sẽ cố gắng <strong>chuyển đổi thành MP3</strong> qua máy chủ trung gian.
+                    </p>
+                  </div>
+
+                  <div className="p-2.5 rounded-xl bg-black/20 border border-white/10 text-[11px] text-theme-muted space-y-1.5">
+                    <p className="text-white font-bold flex items-center gap-1">
+                      💡 Mẹo nhỏ nếu chuyển đổi tự động bị kẹt (do YouTube chặn IP):
+                    </p>
+                    <p>
+                      Mở trang web <strong>YTSave.to</strong> để tải file MP3 về máy trong 3 giây, sau đó chọn tab <strong>📁 Tải MP3</strong> ở trên để lưu vào bài hát!
+                    </p>
+                    <a
+                      href={`https://ytsave.to/en2/?url=${encodeURIComponent(ytConvert.url || 'https://www.youtube.com')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500 text-black font-bold text-xs hover:bg-emerald-400 transition-all shadow"
+                    >
+                      🚀 Mở YTSave.to Tải MP3 Nhanh ↗
+                    </a>
+                  </div>
                 </div>
 
                 <form onSubmit={handleYouTubeConvert} className="space-y-3 text-xs">
